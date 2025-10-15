@@ -1,0 +1,7 @@
+def TheodoresenAeroModel(par,U,omega):
+    """
+    Build the added aerodynamic mass, stiffness and damping matrices predicted by the Theodoresen model.
+    """
+
+    k = par.b * omega / U
+    L_w_dot_dot, L_w_dot, L_w, L_alpha_dot_dot, L_alpha_dot, L_alpha, M_w_dot_dot, M_w_dot, M_w, M_alpha_dot_dot, M_alpha_dot, M_alpha = CooperWrightNotation(par,k)

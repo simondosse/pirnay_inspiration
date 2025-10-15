@@ -17,7 +17,7 @@ plt.rcParams.update({
 })
 
 
-def run_model(model_params):
+def run_model(model_params): # run the model to get f and the damping and plot the results
     '''
     Run the Reduced Order Model and plot the results.
     '''
