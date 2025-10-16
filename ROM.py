@@ -12,17 +12,17 @@ def bendingModeShapes(par):
     PARAMETERS
     ---------------
     par : object
-    Wing parameters (geometry and properties). Expects fields such as
-    `Nw`, `has_tip`, `s`, `y`, `m`, and `Mt`.
+        Wing parameters (geometry and properties). Expects fields such as
+        `Nw`, `has_tip`, `s`, `y`, `m`, and `Mt`.
 
     RETURNS
     ---------------
     phi_normalized : list[np.ndarray]
-    Bending mode shapes φ(y) for each mode (length `Nw`).
+        Bending mode shapes φ(y) for each mode (length `Nw`).
     phi_dot_normalized : list[np.ndarray]
-    First spatial derivatives dφ/dy for each bending mode.
+        First spatial derivatives dφ/dy for each bending mode.
     phi_dotdot_normalized : list[np.ndarray]
-    Second spatial derivatives d²φ/dy² for each bending mode.
+        Second spatial derivatives d²φ/dy² for each bending mode.
     """
     n = par.Nw
 
@@ -91,17 +91,17 @@ def torsionModeShapes(par):
     PARAMETERS
     ---------------
     par : object
-    Wing parameters (geometry and properties). Expects fields such as
-    `Nalpha`, `has_tip`, `s`, `y`, `I_alpha`, and `I_alpha_t`.
+        Wing parameters (geometry and properties). Expects fields such as
+        `Nalpha`, `has_tip`, `s`, `y`, `I_alpha`, and `I_alpha_t`.
 
     RETURNS
     ---------------
     phi_normalized : list[np.ndarray]
-    Torsion mode shapes ψ(y) for each mode (length `Nalpha`).
+        Torsion mode shapes ψ(y) for each mode (length `Nalpha`).
     phi_dot_normalized : list[np.ndarray]
-    First spatial derivatives dψ/dy for each torsion mode.
+        First spatial derivatives dψ/dy for each torsion mode.
     phi_dotdot_normalized : list[np.ndarray]
-    Second spatial derivatives d²ψ/dy² for each torsion mode.
+        Second spatial derivatives d²ψ/dy² for each torsion mode.
     """
     n = par.Nalpha
 
@@ -153,16 +153,16 @@ def modalMatrices(par):
     PARAMETERS
     ---------------
     par : object
-    Wing parameters and mode shapes settings. Uses `y`, `s`, `Nw`, `Nalpha`.
+        Wing parameters and mode shapes settings. Uses `y`, `s`, `Nw`, `Nalpha`.
 
     RETURNS
     ---------------
     phi_ww : np.ndarray
-    Bending–bending modal overlap matrix (shape `Nw x Nw`).
+        Bending–bending modal overlap matrix (shape `Nw x Nw`).
     phi_alphaalpha : np.ndarray
-    Torsion–torsion modal overlap matrix (shape `Nalpha x Nalpha`).
+        Torsion–torsion modal overlap matrix (shape `Nalpha x Nalpha`).
     phi_walpha : np.ndarray
-    Bending–torsion modal overlap matrix (shape `Nw x Nalpha`).
+        Bending–torsion modal overlap matrix (shape `Nw x Nalpha`).
     """
 
     phi_w, _, _ = bendingModeShapes(par)
@@ -207,24 +207,24 @@ def getMatrix(phi1,phi2,len1,len2,arg,argtip,par):
     PARAMETERS
     ---------------
     phi1 : list[np.ndarray]
-    First set of mode shapes sampled on `par.y` (length `len1`).
+        First set of mode shapes sampled on `par.y` (length `len1`).
     phi2 : list[np.ndarray]
-    Second set of mode shapes sampled on `par.y` (length `len2`).
+        Second set of mode shapes sampled on `par.y` (length `len2`).
     len1 : int
-    Number of modes in `phi1`.
+        Number of modes in `phi1`.
     len2 : int
-    Number of modes in `phi2`.
+        Number of modes in `phi2`.
     arg : float or array-like
-    Spanwise coefficient inside the integral (e.g., mass per unit length, stiffness per unit length).
+        Spanwise coefficient inside the integral (e.g., mass per unit length, stiffness per unit length).
     argtip : float
-    Tip contribution coefficient (e.g., tip mass or tip inertia).
+        Tip contribution coefficient (e.g., tip mass or tip inertia).
     par : object
-    Wing parameters with fields like `y`, `s`, `has_tip`.
+        Wing parameters with fields like `y`, `s`, `has_tip`.
 
     RETURNS
     ---------------
     X : np.ndarray
-    Computed matrix of size (`len1`, `len2`) including tip contributions if enabled.
+        Computed matrix of size (`len1`, `len2`) including tip contributions if enabled.
     """
 
     X = np.zeros((len1,len2))
@@ -254,12 +254,12 @@ def getStructuralMassMatrix(par):
     PARAMETERS
     ---------------
     par : object
-    Wing parameters and mode counts.
+        Wing parameters and mode counts.
 
     RETURNS
     ---------------
     M : np.ndarray
-    Structural mass matrix of shape (`Nw+Nalpha`, `Nw+Nalpha`).
+        Structural mass matrix of shape (`Nw+Nalpha`, `Nw+Nalpha`).
     """
 
     phi_w, _, _ = bendingModeShapes(par)
@@ -280,12 +280,12 @@ def getStructuralStiffness(par):
     PARAMETERS
     ---------------
     par : object
-    Wing parameters and mode counts.
+        Wing parameters and mode counts.
 
     RETURNS
     ---------------
     K : np.ndarray
-    Structural stiffness matrix of shape (`Nw+Nalpha`, `Nw+Nalpha`).
+        Structural stiffness matrix of shape (`Nw+Nalpha`, `Nw+Nalpha`).
     """
 
     _, _, phi_dotdot_w = bendingModeShapes(par)
@@ -305,12 +305,12 @@ def getStructuralDamping(par):
     PARAMETERS
     ---------------
     par : object
-    Wing parameters and mode counts (includes modal damping ratios).
+        Wing parameters and mode counts (includes modal damping ratios).
 
     RETURNS
     ---------------
     C : np.ndarray
-    Structural damping matrix of shape (`Nw+Nalpha`, `Nw+Nalpha`).
+        Structural damping matrix of shape (`Nw+Nalpha`, `Nw+Nalpha`).
     """
 
     M = getStructuralMassMatrix(par)
@@ -342,16 +342,16 @@ def StructuralMatrices(model_params):
     PARAMETERS
     ---------------
     model_params : object
-    Model parameters container passed to internal routines.
+        Model parameters container passed to internal routines.
 
     RETURNS
     ---------------
     M : np.ndarray
-    Structural mass matrix.
+        Structural mass matrix.
     C : np.ndarray
-    Structural damping matrix.
+        Structural damping matrix.
     K : np.ndarray
-    Structural stiffness matrix.
+        Structural stiffness matrix.
     """
 
     par = model_params
@@ -371,14 +371,14 @@ def QuasiSteadyAeroModel(par,U):
     PARAMETERS
     ---------------
     par : object
-    Wing and aerodynamic parameters (uses `rho_air`, `c`, `dCn`, `dCm`, mode counts).
+        Wing and aerodynamic parameters (uses `rho_air`, `c`, `dCn`, `dCm`, mode counts).
     U : float
-    Freestream velocity (m/s).
+        Freestream velocity (m/s).
 
     RETURNS
     ---------------
     Ka : np.ndarray
-    Added aerodynamic stiffness matrix of shape (`Nw+Nalpha`, `Nw+Nalpha`).
+        Added aerodynamic stiffness matrix of shape (`Nw+Nalpha`, `Nw+Nalpha`).
     """
 
     phi_ww, phi_alphaalpha, phi_walpha = modalMatrices(par)
@@ -393,14 +393,14 @@ def TheodorsenFunction(k):
     PARAMETERS
     ---------------
     k : float
-    Reduced frequency (k = ω b / U).
+        Reduced frequency (k = ω b / U).
 
     RETURNS
     ---------------
     C_real : float
-    Real part of the Theodorsen function C(k).
+        Real part of the Theodorsen function C(k).
     C_imag : float
-    Imaginary part of the Theodorsen function C(k).
+        Imaginary part of the Theodorsen function C(k).
     """
 
     # if k <= 1/2 :
@@ -425,36 +425,36 @@ def CooperWrightNotation(par,k):
     PARAMETERS
     ---------------
     par : object
-    Aerodynamic parameters (uses `dCn`, `dCm`, `a`).
+        Aerodynamic parameters (uses `dCn`, `dCm`, `a`).
     k : float
-    Reduced frequency (k = ω b / U).
+        Reduced frequency (k = ω b / U).
 
     RETURNS
     ---------------
     L_w_dot_dot : float
-    Added-lift coefficient for w¨ term.
+        Added-lift coefficient for w¨ term.
     L_w_dot : float
-    Added-lift coefficient for w˙ term.
+        Added-lift coefficient for w˙ term.
     L_w : float
-    Added-lift coefficient for w term.
+        Added-lift coefficient for w term.
     L_alpha_dot_dot : float
-    Added-lift coefficient for α¨ term.
+        Added-lift coefficient for α¨ term.
     L_alpha_dot : float
-    Added-lift coefficient for α˙ term.
+        Added-lift coefficient for α˙ term.
     L_alpha : float
-    Added-lift coefficient for α term.
+        Added-lift coefficient for α term.
     M_w_dot_dot : float
-    Added-moment coefficient for w¨ term.
+        Added-moment coefficient for w¨ term.
     M_w_dot : float
     Added-moment coefficient for w˙ term.
     M_w : float
-    Added-moment coefficient for w term.
+        Added-moment coefficient for w term.
     M_alpha_dot_dot : float
-    Added-moment coefficient for α¨ term.
+        Added-moment coefficient for α¨ term.
     M_alpha_dot : float
-    Added-moment coefficient for α˙ term.
+        Added-moment coefficient for α˙ term.
     M_alpha : float
-    Added-moment coefficient for α term.
+        Added-moment coefficient for α term.
     """
 
     F,G = TheodorsenFunction(k)
@@ -503,12 +503,12 @@ def ModalParamAtRest(par):
     PARAMETERS
     ---------------
     par : object
-    Wing parameters and mode counts.
+        Wing parameters and mode counts.
 
     RETURNS
     ---------------
     f0 : np.ndarray
-    Natural frequencies in Hz for the structural modes.
+        Natural frequencies in Hz for the structural modes.
     """
 
     M = getStructuralMassMatrix(par)
@@ -535,16 +535,16 @@ def stateMatrixAero(par,U,omega):
     PARAMETERS
     ---------------
     par : object
-    Wing and aerodynamic parameters, including model selection `model_aero`.
+        Wing and aerodynamic parameters, including model selection `model_aero`.
     U : float
-    Freestream velocity (m/s).
+        Freestream velocity (m/s).
     omega : float
-    Circular frequency used in unsteady aerodynamics (rad/s).
+        Circular frequency used in unsteady aerodynamics (rad/s).
 
     RETURNS
     ---------------
     A : np.ndarray
-    State matrix of size (2(Nw+Nalpha) x 2(Nw+Nalpha)).
+        State matrix of size (2(Nw+Nalpha) x 2(Nw+Nalpha)).
     """
 
     M = getStructuralMassMatrix(par)
@@ -574,17 +574,17 @@ def ModalParamDyn(par):
 
     PARAMETERS
     ---------------
-    par : object
-    Parameters including `U` (array of wind speeds) and structural/aero settings.
+    par : ModelParameters
+        Parameters including `U` (array of wind speeds) and structural/aero settings.
 
     RETURNS
     ---------------
     f : np.ndarray
-    Modal frequencies in Hz for two tracked modes (shape len(U) x 2).
+        Modal frequencies in Hz for two tracked modes (shape len(U) x 2).
     damping : np.ndarray
-    Modal damping ratios for the two modes (shape len(U) x 2).
+        Modal damping ratios for the two modes (shape len(U) x 2).
     realpart : np.ndarray
-    Real parts of the corresponding eigenvalues (shape len(U) x 2).
+        Real parts of the corresponding eigenvalues (shape len(U) x 2).
     '''
 
     U = par.U

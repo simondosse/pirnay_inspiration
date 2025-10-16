@@ -83,8 +83,8 @@ class ModelParameters:
         self.rho_air = 1.204                    # Air density
         self.dCn = 4                          # Normal force coefficient
         self.dCm = 0.5                         # Moment coefficient
-        # actually it shoudn't be constant
-        self.Umax = 35                          # Maximum velocity
+        # actually the dCm shoudn't be constant, in the stall region the curve is not linear anymore
+        self.Umax = 35                          # Maximum velocity of the IAT wind tunnel
         self.steps = 100                        # Number of velocity steps
         self.U = np.linspace(0.1, self.Umax, self.steps)
 
