@@ -101,3 +101,6 @@ class ModelParameters:
                 setattr(self, key, value)
             else:
                 raise AttributeError(f"Parameter has no attribute '{key}'")
+        '''
+        it should also update the dependent parameters like x_alpha and a if x_ea or x_cg are updated
+        '''
