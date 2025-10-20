@@ -512,7 +512,7 @@ def ModalParamAtRest(par):
 
     PARAMETERS
     ---------------
-    par : object
+    par : ModelParameters
         Wing parameters and mode counts.
 
     RETURNS
@@ -612,24 +612,85 @@ def ModalParamDyn(par):
         
         A = stateMatrixAero(par,U[i],previous_omega)
         eigVal, _ = np.linalg.eig(A)
-        eigVal = eigVal[::2]
+        eigVal = eigVal[::2] # we only keep the eigenvalues with positive imaginary part (we get rid of the conjugate)
 
-        eig = np.imag(eigVal)
-        idx = np.argsort(abs(eig))
-        eig = eig[idx]
+        w = np.imag(eigVal) # real damped natural frequencies wb
+        idx = np.argsort(abs(w)) # we sort the eigenvalues ascending order
+        w = w[idx]
 
-        p = np.real(eigVal)[idx]
-        eta = - np.sign(p) * np.sqrt(1 / (1 + (eig/p)**2))
+        p = np.real(eigVal)[idx] # we sort the real part of the eigenvalues in the same order as the imaginary part
+        eta = - np.sign(p) * np.sqrt(1 / (1 + (w/p)**2))
+        '''
+        eta is computed as eta = - real(lambda) / abs(lambda) = - real(lambda) / sqrt(real(lambda)^2 + imag(lambda)^2)
+        we compute it from the damped wb et not directly from w0
+        '''
 
-        previous_omega = (eig[1] + eig[2])/2
+        previous_omega = (w[1] + w[2])/2
 
-        f[i,0] = eig[1] / (2*np.pi)
-        f[i,1] = eig[2] / (2*np.pi)
-        # we only keep the 2nd and 3rd mode (usually it's the 2nd bending mode and 1st torsion mode)
+
+        # we only keep the 2nd [1] and 3rd [2] mode (usually it's the 2nd bending mode and 1st torsion mode)
+        f[i,0] = w[1] / (2*np.pi)
+        f[i,1] = w[2] / (2*np.pi)
+
         damping[i,0] = eta[1]
         damping[i,1] = eta[2]
 
         realpart[i,0] = p[1]
         realpart[i,1] = p[2]
 
+        valp = np.linalg.eig(A)
+
     return f, damping , realpart
+
+
+
+
+# ------ OBJECTIVES COMPUTATIONS ------
+
+def damping_crossing_slope(U, damping):
+    '''
+    Function to evaluate when the damping (of the Torsion mode) crosses 0,
+    we also evaluate the slope when it crosses (if it crosses, otherwise near it)
+
+    In flutter case we always send the TORSION mode damping(U), 3rd mode of the struc
+    when balancement is not considered (so usually 2nd column of damping from ROM evaluation)
+    '''
+    # damp_2d: shape (nU, n_modes)
+    Uc_best = None
+    slope_best = None
+
+
+    d = damping
+    # look for the first possitive to negative crossing >0 -> <=0
+    trans = np.where((d[:-1] > 0.0) & (d[1:] <= 0.0))[0]
+
+    # If a crossing exists :
+    if trans.size > 0:
+        j = int(trans[0])
+        # linear interpolation to have a precise Uc
+        du = U[j+1] - U[j]
+        dd = d[j+1] - d[j]
+        if dd != 0:
+            alpha = -d[j] / dd
+            Uc = U[j] + alpha * du
+        else:
+            Uc = U[j]
+        slope = dd / du if du != 0 else 0.0
+
+        Uc_best = Uc
+        slope_best = slope_best
+
+        return Uc_best, slope_best
+    else :  # if a crossing does not exist
+        slope_arr = np.gradient(d, U)
+        neg_idx = np.where(slope_arr < 0)[0]
+        if neg_idx.size > 0:
+            #we take the lowest slopes among the negative ones
+            j = neg_idx[np.argmin(slope_arr[neg_idx])]
+            slope = slope_arr[j]
+            return U[j], slope
+        else: # if we don't have negative slopes
+            # fallback: point le plus proche de 0, pente forcée à 0 si non négative
+            k = int(np.argmin(np.abs(d)))
+            slope = slope_arr[k] if slope_arr[k] < 0.0 else 0.0
+            return U[k], slope

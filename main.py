@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from input import ModelParameters
 import ROM
 import plotter
+import NACA
 from data_manager import save_modal_data, _load_npz
 
 
@@ -58,7 +59,14 @@ else:
 
 #Theodorsen model
 model_theod = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, 'Theodorsen')
-# f, damping, _ = ROM.ModalParamDyn(model_theod)
+f, damping, _ = ROM.ModalParamDyn(model_theod)
+
+model_struc = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t)
+eig_strucS2 = ROM.ModalParamAtRest(model_struc)
+model_struc.update(s=1.5)
+eig_strucS15 = ROM.ModalParamAtRest(model_struc)
+
+
 # save_modal_data(f = f, damping = damping, model_params=model_theod,out_dir='data', filename='model_params_TheodorsenS2.npz')
 
 # #QuasiSteady model
@@ -110,7 +118,7 @@ if hop:
     # plot_params_table('data/model_params_Theodorsen.npz')
 
 #%%----------------------------- NACA 0012 airfoil shape plotter
-import NACA
+
 
 
 
