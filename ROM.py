@@ -615,7 +615,7 @@ def ModalParamDyn(par):
 
         f[i,0] = eig[1] / (2*np.pi)
         f[i,1] = eig[2] / (2*np.pi)
-
+        # we only keep the 2nd and 3rd mode (usually it's the 2nd bending mode and 1st torsion mode)
         damping[i,0] = eta[1]
         damping[i,1] = eta[2]
 

@@ -2,18 +2,8 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from data_manager import _load_npz
 
-
-def _load_npz(npz_path: str):
-    """Load a saved .npz and return arrays and params.
-
-    Returns a dict with keys: 'U', 'f', 'damping', 'params'.
-    """
-    if not os.path.exists(npz_path):
-        raise FileNotFoundError(f"File not found: {npz_path}. Run main.py first to generate it.")
-    data = np.load(npz_path, allow_pickle=False)
-    params = {k[2:]: data[k] for k in data.files if k.startswith('p_')}
-    return {'U': data['U'], 'f': data['f'], 'damping': data['damping'], 'params': params}
 
 def plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz'):
     """
@@ -173,33 +163,5 @@ def plot_params_table(npz_path: str):
     plt.show()
 
 
-#%% plot single data
 
-plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz')
-
-#%%
-
-
-data = _load_npz('data/model_params_Theodorsen.npz')
-fig, ax = plt.subplots()
-ax.plot(data['U'], data['damping'][:, 0],label='0')
-ax.plot(data['U'], data['damping'][:, 1],label = '1')
-ax.legend()
-plt.show()
-
-data = _load_npz('data/model_params_Theodorsen.npz')
-fig, ax = plt.subplots()
-ax.plot(data['U'], data['f'][:, 0],label='0')
-ax.plot(data['U'], data['f'][:, 1],label = '1')
-ax.legend()
-plt.show()
-#%%
-
-plot_modal_data_two(npz_path_a='data/model_params_Theodorsen.npz',
-                    npz_path_b='data/model_params_QuasiSteady.npz')
-plot_modal_data_two(npz_path_a='data/model_params_TheodorsenS2.npz',
-                    npz_path_b='data/model_params_QuasiSteadyS2.npz')
-# plot_params_table('data/model_params_Theodorsen.npz')
-
-#%%
 
