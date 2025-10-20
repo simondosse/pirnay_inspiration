@@ -1,0 +1,14 @@
+# Ignorer les fichiers Python compilés
+__pycache__/
+*.pyc
+
+# Ignorer les fichiers de données
+*.npz
+*.csv
+*.mat
+
+# (optionnel) ignorer d'autres fichiers temporaires
+*.log
+*.tmp
+
+.venv

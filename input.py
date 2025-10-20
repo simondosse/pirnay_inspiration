@@ -50,6 +50,7 @@ class ModelParameters:
         self.x_cg = x_cg                        # Inertial axis location
         self.x_alpha = x_cg - x_ea              # Distance between ea and cg
         self.a = (self.x_ea / self.b) - 1       # Non-dimensional ea location
+        self.tc = 0.15                          # Thickness-to-chord ratio (default 15%) NACA0015
 
         # Structural parameters
         self.m = m                              # Mass per unit length

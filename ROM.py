@@ -11,7 +11,7 @@ def bendingModeShapes(par):
 
     PARAMETERS
     ---------------
-    par : object
+    par : ModelParameters
         Wing parameters (geometry and properties). Expects fields such as
         `Nw`, `has_tip`, `s`, `y`, `m`, and `Mt`.
 
@@ -49,7 +49,7 @@ def bendingModeShapes(par):
 
         func_target = []
         for i in range(len(func)-1):
-            if func[i] * func[i+1] < 0:
+            if func[i] * func[i+1] < 0: # we seek for a change of sign, that means f(b)=0
                 func_target.append(i)
 
                 if len(func_target) == n:
@@ -76,7 +76,7 @@ def bendingModeShapes(par):
         b_ = np.cos(beta[i] * par.y) + np.cosh(beta[i] * par.y)
         phi_dotdot = - (a_ - gamma * b_) * (beta[i]**2)
 
-        modal_mass =  np.trapezoid(par.m*phi**2, par.y)
+        modal_mass =  np.trapezoid(par.m*phi**2, par.y) # ∫ m(y) φ(y)² dy
 
         phi_normalized.append(phi)#/np.sqrt(modal_mass))
         phi_dot_normalized.append(phi_dot)#/np.sqrt(modal_mass))
@@ -149,10 +149,11 @@ def torsionModeShapes(par):
 def modalMatrices(par):
     """
     Build the modal matrices to avoid redundant computations.
+    We build the Phi_ww, Phi_alphaalpha and Phi_walpha matrices.
 
     PARAMETERS
     ---------------
-    par : object
+    par : ModelParameters
         Wing parameters and mode shapes settings. Uses `y`, `s`, `Nw`, `Nalpha`.
 
     RETURNS
@@ -168,8 +169,9 @@ def modalMatrices(par):
     phi_w, _, _ = bendingModeShapes(par)
     phi_alpha, _, _ = torsionModeShapes(par)
 
+    # we make the mode shape continuous functions to be able to integrate them
     phi_w_interp = [interp1d(par.y, phi_w[i], kind='cubic', fill_value="extrapolate") for i in range(par.Nw)]
-    phi_alpha_interp = [interp1d(par.y, phi_alpha[i], kind='cubic', fill_value="extrapolate") for i in range(par.Nalpha)]
+    phi_alpha_interp = [interp1d(par.y, phi_alpha[i], kind='cubic', fill_value="extrapolate") for i in range(par.Nalpha)] #fill_value="extrapolate" to be able to evaluate outside the range of y if needed (or just to correct boundary errors)
 
     ''' Initialize modal matrices '''
     phi_ww = np.zeros((par.Nw, par.Nw))
@@ -181,7 +183,10 @@ def modalMatrices(par):
             def integrand(y):
                 return phi_w_interp[i](y) * phi_w_interp[j](y)
 
-            phi_ww[i, j] = quad(integrand, 0, par.s)[0]
+            phi_ww[i, j] = quad(integrand, 0, par.s)[0] # phi_ww[i,j] = ∫_0^s φw_i(y) φw_j(y) dy
+            '''
+            quad is a numerical integrator from scipy that takes a function and the limits of integration
+            '''
 
     for i in range(par.Nalpha):
         for j in range(par.Nalpha):
@@ -201,7 +206,9 @@ def modalMatrices(par):
 
 def getMatrix(phi1,phi2,len1,len2,arg,argtip,par):
     """
-    Function used to generalize the computation of the mass and stiffness matrices (structural). It can only be used for matrices made of element of the 
+    Function used to generalize the computation of the mass and stiffness matrices (structural).
+    
+    It can only be used for matrices made of element of the 
     form X = int(arg * phi1 * phi2) and Xtip = argtip * phi1[s] * phi2[s] if the tip mass is considered.
 
     PARAMETERS
@@ -238,7 +245,10 @@ def getMatrix(phi1,phi2,len1,len2,arg,argtip,par):
             def integrand(y):
                 return arg * phi1_interp[i](y) * phi2_interp[j](y)
 
-            X[i, j] = quad(integrand, 0, par.s)[0]
+            X[i, j] = quad(integrand, 0, par.s)[0] # X[i,j] = ∫_0^s arg * phi1_i(y) * phi2_j(y) dy
+            '''
+            arg can be either mass per unit length, bending stiffness per unit length, torsional inertia per unit length or torsional stiffness per unit length
+            '''
 
             if par.has_tip is True:
                 Xtip[i, j] = argtip * phi1[i][-1] * phi2[j][-1]
@@ -411,7 +421,7 @@ def TheodorsenFunction(k):
 
     # return np.real(C), np.imag(C)
 
-    K0 = kv(0, 1j * k)
+    K0 = kv(0, 1j * k) #kv is the modified Bessel function of the second kind from scipy.special
     K1 = kv(1, 1j * k)
 
     C = K1 / (K0 + K1)

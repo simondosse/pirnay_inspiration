@@ -32,11 +32,14 @@ c = 0.2 #chord
 x_ea = c/3 # elastic axis location from leading edge
 x_cg = 0.379*c # center of gravity location from leading edge
 m = 2.4 # mass per unit span
-I_alpha = 5.6e-3 # mass moment of inertia per unit span
+
+res = NACA.inertia_mass_naca0015(c=c, mu=m, N=4000, span=s)
+# I_alpha = 5.6e-3 # mass moment of inertia per unit span
+I_alpha=res.Jz_mass+m*abs(x_cg-x_ea)**2 # parallel axis theorem to get torsional inertia about elastic axis
 EIx = 366 # bending stiffness
 GJ = 78 # torsional stiffness
 eta_w = 0.005 # structural damping ratio in bending
-eta_alpha = 0.005 # structural damping ratio in torsion
+eta_alpha = 0.005 # structural damping ratio in torsion, damping ratio are arbitrary choosen here
 
 ''' Wingtip parameters '''
 
@@ -55,13 +58,13 @@ else:
 
 #Theodorsen model
 model_theod = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, 'Theodorsen')
-f, damping, _ = ROM.ModalParamDyn(model_theod)
-save_modal_data(f = f, damping = damping, model_params=model_theod,out_dir='data', filename='model_params_TheodorsenS2.npz')
+# f, damping, _ = ROM.ModalParamDyn(model_theod)
+# save_modal_data(f = f, damping = damping, model_params=model_theod,out_dir='data', filename='model_params_TheodorsenS2.npz')
 
-#QuasiSteady model
-model_qs = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, 'QuasiSteady')
-f, damping, _ = ROM.ModalParamDyn(model_qs)
-save_modal_data(f = f, damping = damping, model_params=model_qs,out_dir='data', filename='model_params_QuasiSteadyS2.npz')
+# #QuasiSteady model
+# model_qs = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, 'QuasiSteady')
+# f, damping, _ = ROM.ModalParamDyn(model_qs)
+# save_modal_data(f = f, damping = damping, model_params=model_qs,out_dir='data', filename='model_params_QuasiSteadyS2.npz')
 
 ''' Parametric studies '''
 # x_t_new = np.linspace(0, 0.02, 10)
@@ -77,32 +80,41 @@ on a another script that only deals with plotting
 databse should be .csv ?
 """
 
-#%% plot single data
+#%%------------------------------------------------
+hop= False
+if hop:
+    plotter.plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz')
 
-plotter.plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz')
-
-#%%
-
-
-data = _load_npz('data/model_params_Theodorsen.npz')
-fig, ax = plt.subplots()
-ax.plot(data['U'], data['damping'][:, 0],label='0')
-ax.plot(data['U'], data['damping'][:, 1],label = '1')
-ax.legend()
+    #%%------------------------------------------------
 
 
-data = _load_npz('data/model_params_Theodorsen.npz')
-fig, ax = plt.subplots()
-ax.plot(data['U'], data['f'][:, 0],label='0')
-ax.plot(data['U'], data['f'][:, 1],label = '1')
-ax.legend()
+    data = _load_npz('data/model_params_Theodorsen.npz')
+    fig, ax = plt.subplots()
+    ax.plot(data['U'], data['damping'][:, 0],label='0')
+    ax.plot(data['U'], data['damping'][:, 1],label = '1')
+    ax.legend()
 
-#%%
 
-plotter.plot_modal_data_two(npz_path_a='data/model_params_Theodorsen.npz',
-                    npz_path_b='data/model_params_QuasiSteady.npz')
-plotter.plot_modal_data_two(npz_path_a='data/model_params_TheodorsenS2.npz',
-                    npz_path_b='data/model_params_QuasiSteadyS2.npz')
-# plot_params_table('data/model_params_Theodorsen.npz')
+    data = _load_npz('data/model_params_Theodorsen.npz')
+    fig, ax = plt.subplots()
+    ax.plot(data['U'], data['f'][:, 0],label='0')
+    ax.plot(data['U'], data['f'][:, 1],label = '1')
+    ax.legend()
 
-#%%
+    #%%--------------------------------------------------------
+
+    plotter.plot_modal_data_two(npz_path_a='data/model_params_Theodorsen.npz',
+                        npz_path_b='data/model_params_QuasiSteady.npz')
+    plotter.plot_modal_data_two(npz_path_a='data/model_params_TheodorsenS2.npz',
+                        npz_path_b='data/model_params_QuasiSteadyS2.npz')
+    # plot_params_table('data/model_params_Theodorsen.npz')
+
+#%%----------------------------- NACA 0012 airfoil shape plotter
+import NACA
+
+
+
+NACA.plot_naca00xx_section_with_cg(t_c=0.15, c=c, N=4000, xcg=x_cg, fill=True, annotate=True)
+
+
+# %%
