@@ -50,7 +50,6 @@ def plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz'):
     ax[1].legend(frameon=False, ncols=2)
     plt.show()
 
-
 def plot_modal_data_two(npz_path_a='data/model_params_Theodorsen.npz',
                         npz_path_b='data/model_params_QuasiSteady.npz'):
     """
@@ -162,6 +161,140 @@ def plot_params_table(npz_path: str):
     plt.tight_layout()
     plt.show()
 
+def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize='per_mode',colors=None,styles=None,sharey=True,figsize=None,suptitle=None,show=True):
+    '''
+    Trace les formes modales par mode, en colonnes :
+    | Mode 1 (f=...) | Mode 2 (f=...) | Mode 3 (f=...) | ...
 
+    Chaque subplot (colonne) superpose w_i(y), alpha_i(y) et, si fourni, des champs supplémentaires (extras).
+
+    Paramètres
+    ----------
+    y : (Ny,) array
+        Abscisses spanwise.
+    freqs_hz : (n_modes,) array
+        Fréquences par mode (Hz).
+    W : (n_modes, Ny) or None
+        Formes en flexion w_i(y).
+    ALPHA : (n_modes, Ny) or None
+        Formes en torsion alpha_i(y).
+    extras : dict[str, np.ndarray] or None
+        Champs additionnels par mode, ex. {'v': V} avec V shape (n_modes, Ny).
+    normalize : {'per_mode','per_field', None}
+        - 'per_mode'  : normalise toutes les courbes d’un même mode par le max absolu parmi les champs présents
+        - 'per_field' : normalise chaque champ indépendamment (par son propre max absolu)
+        - None        : pas de normalisation
+    colors : dict[str, str] or None
+        Couleurs par champ, ex. {'w': 'C0','alpha': 'C1','v':'C2'}.
+    styles : dict[str, str] or None
+        Styles de ligne par champ, ex. {'w':'-','alpha':'--','v':':' }.
+    sharey : bool
+        Partage de l’axe Y entre subplots.
+    figsize : tuple or None
+        Taille figure (L, H). Défaut calculé sur le nb de modes.
+    suptitle : str or None
+        Titre global de la figure.
+    show : bool
+        Appelle plt.show() si True.
+
+    Retour
+    ------
+    fig, axes : matplotlib Figure et Axes
+    '''
+
+
+    # Construire la collection de champs à tracer
+    fields = []
+    if W is not None:
+        fields.append(('w', np.asarray(W)))
+    if ALPHA is not None:
+        fields.append(('alpha', np.asarray(ALPHA)))
+    if extras:
+        for name, mat in extras.items():
+            fields.append((str(name), np.asarray(mat)))
+
+    if len(fields) == 0:
+        raise ValueError("Aucun champ fourni (W, ALPHA ou extras).")
+
+    # Vérifications de dimensions et harmonisation
+    y = np.asarray(y).ravel()
+    Ny = y.size
+
+    # Nombre de modes à tracer = min(nb colonnes disponibles, len(freqs_hz))
+    n_modes_available = [f[1].shape[0] for f in fields]
+    n_modes = int(np.min([np.min(n_modes_available), np.asarray(freqs_hz).size]))
+
+    # Vérifie la dimension Ny
+    for name, mat in fields:
+        if mat.shape[1] != Ny:
+            raise ValueError(f"Le champ '{name}' a Ny={mat.shape[1]} différent de len(y)={Ny}.")
+
+    # Couleurs / styles par défaut
+    if colors is None:
+        colors = {}
+    if styles is None:
+        styles = {}
+
+    default_palette = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5']
+    default_styles = ['-', '--', ':', '-.']
+
+    # Assigner des couleurs/styles par champ s’ils manquent
+    for idx, (name, _) in enumerate(fields):
+        colors.setdefault(name, default_palette[idx % len(default_palette)])
+        styles.setdefault(name, default_styles[idx % len(default_styles)])
+
+    # Figure
+    if figsize is None:
+        figsize = (max(5.0, 3.0 * n_modes), 3.2)  # largeur ~3 par mode
+    fig, axes = plt.subplots(1, n_modes, sharey=sharey, figsize=figsize, constrained_layout=True)
+    if n_modes == 1:
+        axes = np.array([axes])
+
+    # Boucle sur les modes (colonnes)
+    for i in range(n_modes):
+        ax = axes[i]
+
+        # Prépare normalisation
+        if normalize == 'per_mode':
+            # max absolu sur tous les champs présents pour ce mode i
+            acc = []
+            for _, mat in fields:
+                acc.append(np.max(np.abs(mat[i, :])))
+            scale = np.max(acc) if len(acc) > 0 else 1.0
+            if scale == 0:
+                scale = 1.0
+
+        # Traces des champs
+        for name, mat in fields:
+            curve = np.array(mat[i, :], dtype=float)
+
+            if normalize == 'per_field':
+                s = np.max(np.abs(curve))
+                if s > 0:
+                    curve = curve / s
+            elif normalize == 'per_mode':
+                curve = curve / scale
+
+            ax.plot(y, curve, color=colors[name], linestyle=styles[name], lw=1.3, label=name)
+
+        # Titres / axes
+        fi = float(freqs_hz[i])
+        ax.set_title(f"Mode {i+1} (f={fi:.2f} Hz)")
+        if i == 0:
+            ax.set_ylabel("Amplitude [a.u.]")
+        ax.set_xlabel("y [m]")
+        ax.grid(True, linewidth=0.3, alpha=0.5)
+
+        # Légende sur le dernier subplot uniquement (évite la répétition)
+        if i == n_modes - 1:
+            ax.legend(frameon=False)
+
+    if suptitle:
+        fig.suptitle(suptitle, y=1.02)
+
+    if show:
+        plt.show()
+
+    return fig, axes
 
 

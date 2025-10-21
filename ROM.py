@@ -3,6 +3,34 @@ from scipy.interpolate import interp1d
 from scipy.integrate import quad
 from scipy.special import kv
 
+''' General functions calculations'''
+
+def _eigs_sorted_positive_imag(A):
+    eigvals, eigvecs = np.linalg.eig(A)
+    sel = np.where(np.imag(eigvals) > 0)[0]
+    eigvals = eigvals[sel]
+    eigvecs = eigvecs[:, sel]
+    idx = np.argsort(np.abs(np.imag(eigvals)))  # tri par fréquence croissante
+    return eigvals[idx], eigvecs[:, idx]
+
+def _phase_align_column(vec):
+    # Aligne la phase de tout le vecteur en se basant sur la plus grande composante
+    k0 = int(np.argmax(np.abs(vec))) # k0 indice de la composante à la plus grande amplitude
+    return vec * np.exp(-1j * np.angle(vec[k0])) if vec[k0] != 0 else vec
+    '''
+    on fait tourner le vecteur pour que la composante max soit réelle et positive (puisqu'on a annulé sa phase en le faisant tourner)
+    comme ça la multiplication avec Phi_w ou Phi_alpha se fera bien
+    Donne une photo à t=0 de wi(y) et alphai(y) représentative du mode
+    Faire une simple valeur abs nous aurait fait perdre les signes ??
+
+    Les faire tourner ne nous fait pas perdre l'info par rapport à la phase entre les vecteurs propres car c'est la phase sur les eta(t) qui nous intéresse
+    Puis un v_i tourné est donc orienté de la même manière pour remonter à w_i et alpha_i
+    '''
+
+def _stack_mode_shapes(phi_list):
+    # Convertit la liste [N_modes] d'array (Ny,) en matrice (N_modes, Ny)
+    return np.vstack(phi_list) if len(phi_list) > 0 else np.zeros((0, 1))
+
 ''' General functions to compute the mode shapes and modal matrices '''
 
 def bendingModeShapes(par):
@@ -145,6 +173,46 @@ def torsionModeShapes(par):
         phi_dotdot_normalized.append(phi_dotdot)
 
     return phi_normalized, phi_dot_normalized, phi_dotdot_normalized
+
+def _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=True):
+    """
+    eigvecs: colonnes = modes (taille 2(Nw+Nalpha) x n_modes) ; on utilise la partie positions.
+    Retourne: w_modes, alpha_modes de tailles (n_modes, Ny).
+    """
+    Nq = par.Nw + par.Nalpha
+    Vq = eigvecs[:Nq, :]  # partie positions, notre vecteur d'état est [qw1 qw2 qw3 qa1 qa2 qa3 qw1' qw2' qw3' qa1' qa2' qa3']'
+    nm = Vq.shape[1]
+
+    phi_w, _, _ = bendingModeShapes(par) # phi_w (Nw,Ny) (but not stack)
+    phi_alpha, _, _ = torsionModeShapes(par) # phi_alpha (Nalpha,Ny) (but not stack)
+    Phi_w = _stack_mode_shapes(phi_w)         # (Nw, Ny)
+    Phi_alpha = _stack_mode_shapes(phi_alpha) # (Nalpha, Ny)
+
+    Ny = Phi_w.shape[1] if par.Nw > 0 else (Phi_alpha.shape[1] if par.Nalpha > 0 else 0)
+    w_modes = np.zeros((nm, Ny), dtype=float)
+    alpha_modes = np.zeros((nm, Ny), dtype=float)
+
+    for i in range(nm):
+        qi = _phase_align_column(Vq[:, i]) # qi est comme Vi quand on considère que la forme le eta(t) saute (eta coordonées modales ici)
+        qw = qi[:par.Nw]
+        qa = qi[par.Nw:Nq]
+
+        if par.Nw > 0:
+            w_modes[i, :] = np.real(qw @ Phi_w)  # (1, Nw) @ (Nw, Ny)
+        if par.Nalpha > 0:
+            alpha_modes[i, :] = np.real(qa @ Phi_alpha)  # (1, Nalpha) @ (Nalpha, Ny)
+
+        if normalize:
+            if par.Nw > 0:
+                m = np.max(np.abs(w_modes[i, :]))
+                if m > 0:
+                    w_modes[i, :] /= m
+            if par.Nalpha > 0:
+                m = np.max(np.abs(alpha_modes[i, :]))
+                if m > 0:
+                    alpha_modes[i, :] /= m
+
+    return w_modes, alpha_modes
 
 def modalMatrices(par):
     """
@@ -504,9 +572,9 @@ def TheodoresenAeroModel(par,U,omega):
 
 ''' Eigenvalue problem and modal parameters extraction '''
 
-''' At rest'''
+''' At rest '''
 
-def ModalParamAtRest(par):
+def ModalParamAtRest(par, normalize=True):
     """
     Compute natural frequencies (at rest, no aerodynamic coupling).
 
@@ -527,14 +595,19 @@ def ModalParamAtRest(par):
 
     Minv = np.linalg.inv(M)
 
-    A = np.block([[-Minv @ C, -Minv @ K], [np.eye(par.Nw + par.Nalpha), np.zeros((par.Nw + par.Nalpha,par.Nw + par.Nalpha))]])
-    eigVal, _ = np.linalg.eig(A)
+    A = np.block([
+        [np.zeros((par.Nw + par.Nalpha, par.Nw + par.Nalpha)), np.eye(par.Nw + par.Nalpha)],
+        [-Minv @ K, -Minv @ C]
+    ])
 
-    aux = np.imag(eigVal)
-    idx = np.argsort(abs(aux))
-    eig = aux[idx]
+    eigvals, eigvecs = _eigs_sorted_positive_imag(A)
+    freqs = np.imag(eigvals) / (2 * np.pi)
+    zeta = -np.real(eigvals) / np.abs(eigvals)
 
-    return eig[::2] / (2*np.pi)
+    w_modes, alpha_modes = _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=normalize)
+    return freqs, zeta, eigvals, eigvecs, w_modes, alpha_modes
+
+
 
 ''' Dynamic '''
 
@@ -574,7 +647,7 @@ def stateMatrixAero(par,U,omega):
         raise ValueError("Model not recognized")
     
     Minv = np.linalg.inv(M)
-    A = np.block([[-Minv @ C, -Minv @ K], [np.eye(par.Nw + par.Nalpha), np.zeros((par.Nw + par.Nalpha,par.Nw + par.Nalpha))]])
+    A = np.block([[np.zeros((par.Nw + par.Nalpha,par.Nw + par.Nalpha)),np.eye(par.Nw + par.Nalpha)],[-Minv @ K,-Minv @ C]])
     
     return A
 
@@ -598,28 +671,29 @@ def ModalParamDyn(par):
     '''
 
     U = par.U
-    omega = ModalParamAtRest(par) * 2 * np.pi
- 
+    # Pour Theodorsen, nécessite un omega de ref pour calculer la frequence réduite pour construire A
+    freqs_struc, _ , _ , _ , _ , _ = ModalParamAtRest(par)
+    omega_struc = 2*np.pi*freqs_struc
+
     f = np.zeros((len(U),2))
     damping = np.zeros((len(U),2))
     realpart = np.zeros((len(U),2))
 
-    previous_omega = (omega[1] + omega[2])/2
-    prev =[]
+    previous_omega = (omega_struc[1] + omega_struc[2])/2 # must be changed when we'll consider the v-DOF
+    prev = []
 
     for i in range(len(U)):
         prev.append(previous_omega)
         
         A = stateMatrixAero(par,U[i],previous_omega)
-        eigVal, _ = np.linalg.eig(A)
-        eigVal = eigVal[::2] # we only keep the eigenvalues with positive imaginary part (we get rid of the conjugate)
+        '''
+        big problem here, we can't order the frequencies like that, when T1 and B2 crosses it will mess everythg
+        '''
 
-        w = np.imag(eigVal) # real damped natural frequencies wb
-        idx = np.argsort(abs(w)) # we sort the eigenvalues ascending order
-        w = w[idx]
+        eigvals, eigvecs = _eigs_sorted_positive_imag(A)
+        w = np.imag(eigvals)
+        zeta = -np.real(eigvals) / np.abs(eigvals)
 
-        p = np.real(eigVal)[idx] # we sort the real part of the eigenvalues in the same order as the imaginary part
-        eta = - np.sign(p) * np.sqrt(1 / (1 + (w/p)**2))
         '''
         eta is computed as eta = - real(lambda) / abs(lambda) = - real(lambda) / sqrt(real(lambda)^2 + imag(lambda)^2)
         we compute it from the damped wb et not directly from w0
@@ -627,25 +701,22 @@ def ModalParamDyn(par):
 
         previous_omega = (w[1] + w[2])/2
 
-
         # we only keep the 2nd [1] and 3rd [2] mode (usually it's the 2nd bending mode and 1st torsion mode)
         f[i,0] = w[1] / (2*np.pi)
         f[i,1] = w[2] / (2*np.pi)
 
-        damping[i,0] = eta[1]
-        damping[i,1] = eta[2]
+        damping[i,0] = zeta[1]
+        damping[i,1] = zeta[2]
 
         realpart[i,0] = p[1]
         realpart[i,1] = p[2]
-
-        valp = np.linalg.eig(A)
 
     return f, damping , realpart
 
 
 
 
-# ------ OBJECTIVES COMPUTATIONS ------
+''' Objectives computations'''
 
 def damping_crossing_slope(U, damping):
     '''
@@ -682,15 +753,15 @@ def damping_crossing_slope(U, damping):
 
         return Uc_best, slope_best
     else :  # if a crossing does not exist
-        slope_arr = np.gradient(d, U)
-        neg_idx = np.where(slope_arr < 0)[0]
+        slope_damping = np.gradient(d, U)
+        neg_idx = np.where(slope_damping < 0)[0]
         if neg_idx.size > 0:
             #we take the lowest slopes among the negative ones
-            j = neg_idx[np.argmin(slope_arr[neg_idx])]
-            slope = slope_arr[j]
-            return U[j], slope
+            j = neg_idx[np.argmin(slope_damping[neg_idx])]
+            slope = slope_damping[j]
+            return None, slope
         else: # if we don't have negative slopes
             # fallback: point le plus proche de 0, pente forcée à 0 si non négative
             k = int(np.argmin(np.abs(d)))
-            slope = slope_arr[k] if slope_arr[k] < 0.0 else 0.0
-            return U[k], slope
+            slope = slope_damping[k] if slope_damping[k] < 0.0 else 0.0
+            return None, slope

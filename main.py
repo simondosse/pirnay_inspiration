@@ -8,6 +8,8 @@ import ROM
 import plotter
 import NACA
 from data_manager import save_modal_data, _load_npz
+from scipy.linalg import eigh
+
 
 
 # plt.close('all')
@@ -34,7 +36,7 @@ x_ea = c/3 # elastic axis location from leading edge
 x_cg = 0.379*c # center of gravity location from leading edge
 m = 2.4 # mass per unit span
 
-res = NACA.inertia_mass_naca0015(c=c, mu=m, N=4000, span=s)
+res = NACA.inertia_mass_naca0015(c=c, mu=m, N=4000, span=s, xcg_known=x_cg)
 # I_alpha = 5.6e-3 # mass moment of inertia per unit span
 I_alpha=res.Jz_mass+m*abs(x_cg-x_ea)**2 # parallel axis theorem to get torsional inertia about elastic axis
 EIx = 366 # bending stiffness
@@ -55,24 +57,30 @@ else:
     I_alpha_t = None
     x_t = None
 
+#%%_________________________________________________
 ''' Set, run and save models '''
 
 #Theodorsen model
 model_theod = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, 'Theodorsen')
 f, damping, _ = ROM.ModalParamDyn(model_theod)
 
+
 model_struc = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t)
 eig_strucS2 = ROM.ModalParamAtRest(model_struc)
 model_struc.update(s=1.5)
 eig_strucS15 = ROM.ModalParamAtRest(model_struc)
 
+#%%___________________________________
+model = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t)
+# f, damping, _ = ROM.ModalParamDyn(model)
 
 # save_modal_data(f = f, damping = damping, model_params=model_theod,out_dir='data', filename='model_params_TheodorsenS2.npz')
 
+#%%________________________________________
 # #QuasiSteady model
-# model_qs = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, 'QuasiSteady')
-# f, damping, _ = ROM.ModalParamDyn(model_qs)
-# save_modal_data(f = f, damping = damping, model_params=model_qs,out_dir='data', filename='model_params_QuasiSteadyS2.npz')
+model_qs = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, 'QuasiSteady')
+f, damping, _ = ROM.ModalParamDyn(model_qs)
+save_modal_data(f = f, damping = damping, model_params=model_qs,out_dir='data', filename='model_params_QuasiSteadyS2.npz')
 
 ''' Parametric studies '''
 # x_t_new = np.linspace(0, 0.02, 10)
@@ -119,10 +127,32 @@ if hop:
 
 #%%----------------------------- NACA 0012 airfoil shape plotter
 
-
-
-
 NACA.plot_naca00xx_section_with_cg(t_c=0.15, c=c, N=4000, xcg=x_cg, fill=True, annotate=True)
 
+
+# %%______________________________________________________________________________
+# plot mode shape
+
+# Modèle structurel seul (sans aéro)
+model_struc = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t)
+f0, zeta0, eig0, V0, W0, A0 = ROM.ModalParamAtRest(model_struc, normalize=True)
+plotter.plot_mode_shapes_grid(y=model_struc.y, freqs_hz=f0, W=W0, ALPHA=A0, normalize='per_field', suptitle='Modes structurels')
+# Modèle aéroélastique à U=20 m/s (Theodorsen par défaut)
+# model_theod = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, 'Theodorsen')
+# fU, zetaU, eigU, VU, WU, AU = ROM.ModalShapesDyn(model_theod, U=20.0, normalize=True)
+
+# Visualiser, par ex. le 3e mode (i=2) :
+# i = 1
+# y = model_struc.y
+# plt.figure()
+# plt.plot(y, W0[i, :], label='w_i(y) at rest')
+# plt.plot(y, A0[i, :], label='alpha_i(y) at rest')
+# plt.legend(); plt.grid(True, alpha=0.4); plt.title('Modes structurels')
+
+# plt.figure()
+# plt.plot(y, WU[i, :], label='w_i(y) at U=20 m/s')
+# plt.plot(y, AU[i, :], label='alpha_i(y) at U=20 m/s')
+# plt.legend(); plt.grid(True, alpha=0.4); plt.title('Modes aéroélastiques')
+# plt.show()
 
 # %%

@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 
 
-def generate_trajectories(problem,nb_lvl=4,nb_traj_opti=6,seed=1):
+def generate_trajectories(problem,nb_lvl=4,nb_traj_opti=6,seed=2):
     
     """
     This function 
@@ -47,7 +47,7 @@ def generate_trajectories(problem,nb_lvl=4,nb_traj_opti=6,seed=1):
     # génération des trajectoires
     N = 10 # nombre de trajectoires générées
     nb_lvl = 4 # nombre de niveau par paramètre, ça va fractionner le niveau
-    nb_traj_opti = 6 
+    # nb_traj_opti = 6 
     
     trajectories = morris.sample(problem, N, nb_lvl, nb_traj_opti,seed = seed)
     # trajectories contient toutes les tajectoires, une trajectoire contient 10 points dans l'espace de paramètres
