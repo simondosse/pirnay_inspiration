@@ -243,7 +243,6 @@ map_full = generate_map_full(problem_AS,
 
 from optimisation_train import Problem_optim_train
 from pymoo.algorithms.moo.nsga2 import NSGA2
-
 from pymoo.optimize import minimize
 from pymoo.visualization.scatter import Scatter
 

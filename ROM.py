@@ -5,13 +5,37 @@ from scipy.special import kv
 
 ''' General functions calculations'''
 
-def _eigs_sorted_positive_imag(A):
+# def _eigs_sorted_positive_imag(A):
+#     eigvals, eigvecs = np.linalg.eig(A)
+#     eigvals_raw, eivecs_raw = eigvals, eigvecs
+#     sel = np.where(np.imag(eigvals) >=0)[0]
+#     eigvals = eigvals[sel]
+#     eigvecs = eigvecs[:, sel]
+#     idx = np.argsort(np.abs(np.imag(eigvals)))  # tri par fréquence croissante
+
+#     if len(eigvals) != 6:
+#         raise ValueError(f"number of eigvalues ({len(eigvals)}) != len(A) ({len(A)}).")
+#     return eigvals[idx], eigvecs[:, idx]
+
+def _eigs_sorted_positive_imag(A, Nq=None):
     eigvals, eigvecs = np.linalg.eig(A)
-    sel = np.where(np.imag(eigvals) > 0)[0]
-    eigvals = eigvals[sel]
-    eigvecs = eigvecs[:, sel]
-    idx = np.argsort(np.abs(np.imag(eigvals)))  # tri par fréquence croissante
-    return eigvals[idx], eigvecs[:, idx]
+
+    # On prend un élément sur deux : un représentant par paire conjuguée,
+    # de base np.linalg.eig() nous renvoie les paires à la suite des autres
+    eigvals = eigvals[::2]
+    eigvecs = eigvecs[:, ::2]
+
+    #
+    order = np.argsort(np.abs(np.imag(eigvals)))
+    eigvals = eigvals[order]
+    eigvecs = eigvecs[:, order]
+
+    # Tronque à Nq ??
+    if Nq is not None:
+        eigvals = eigvals[:Nq]
+        eigvecs = eigvecs[:, :Nq]
+
+    return eigvals, eigvecs
 
 def _phase_align_column(vec):
     # Aligne la phase de tout le vecteur en se basant sur la plus grande composante
@@ -30,6 +54,59 @@ def _phase_align_column(vec):
 def _stack_mode_shapes(phi_list):
     # Convertit la liste [N_modes] d'array (Ny,) en matrice (N_modes, Ny)
     return np.vstack(phi_list) if len(phi_list) > 0 else np.zeros((0, 1))
+
+def _mode_id_vec(w_mode, alpha_mode):
+    # concatenate shapes into one vector for correlation; use real parts
+    hop = np.hstack([np.asarray(w_mode).ravel(), np.asarray(alpha_mode).ravel()])
+    '''
+    np.hstack([np.array([1, 2, 3]), np.array([4, 5, 6])])
+    -> array([1, 2, 3, 4, 5, 6])
+    '''
+    return hop
+
+def _mac(a, b, eps=1e-16):
+    '''
+    Calculate MAC(a,b)
+    1=> same (à une phase près)
+    0=> orthogonal
+    '''
+    num = np.abs(np.vdot(a, b))**2
+    den = (np.vdot(a, a).real * np.vdot(b, b).real) + eps
+    return num / den
+
+def _assign_by_mac(prev_refs, curr_vecs):
+    '''
+    On veut maximiser la similarité au sens MAC
+
+    Parameters:
+    -----------
+    prev_refs: list of K vectors (K=2 here) , Vecteurs suivis à U[i-1]
+    curr_vecs: list of N vectors (N=par.Nq) , N vecteurs candidats à U[i]
+
+    Returns:
+    -----------
+    best[1] : tuple (j0, j1)
+        indices des vecteurs qui ressemblent le plus, respectivement au ref prevs_refs
+    '''
+    K, N = len(prev_refs), len(curr_vecs)
+    MAC = np.zeros((K, N))
+    '''
+    MAC = [ MAC(r1,c1) ... MAC(r1,c_Nq)
+            MAC(r2,c1) ... MAC(r2,c_Nq) ]
+    '''
+    for k in range(K):
+        for j in range(N):
+            MAC[k, j] = _mac(prev_refs[k], curr_vecs[j]) #we fill the MAX matrix
+    # exhaustive assignment for K=2 (robust and simple)
+    best = (-np.inf, None)
+    for j0 in range(N):
+        for j1 in range(N):
+            if j1 == j0: # on va regarde le MAC pour toutes les paires possibles (sauf autoMAC ofc)
+                continue
+            score = MAC[0, j0] + MAC[1, j1] #on somme le MAC de MAC(w,c1) et MAC(alpha,c1) car le mode c'est la somme des contributions
+            if score > best[0]:
+                best = (score, (j0, j1)) #on garde le meilleur
+    return best[1], MAC
 
 ''' General functions to compute the mode shapes and modal matrices '''
 
@@ -174,11 +251,13 @@ def torsionModeShapes(par):
 
     return phi_normalized, phi_dot_normalized, phi_dotdot_normalized
 
-def _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=True):
+def _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=None):
     """
     eigvecs: colonnes = modes (taille 2(Nw+Nalpha) x n_modes) ; on utilise la partie positions.
     Retourne: w_modes, alpha_modes de tailles (n_modes, Ny).
     """
+    # print("Calcule des contributions des ddl par mode")
+    # print(f"normalize = {normalize}")
     Nq = par.Nw + par.Nalpha
     Vq = eigvecs[:Nq, :]  # partie positions, notre vecteur d'état est [qw1 qw2 qw3 qa1 qa2 qa3 qw1' qw2' qw3' qa1' qa2' qa3']'
     nm = Vq.shape[1]
@@ -202,15 +281,33 @@ def _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=True):
         if par.Nalpha > 0:
             alpha_modes[i, :] = np.real(qa @ Phi_alpha)  # (1, Nalpha) @ (Nalpha, Ny)
 
-        if normalize:
+        if normalize=='per_field':
+            
             if par.Nw > 0:
                 m = np.max(np.abs(w_modes[i, :]))
                 if m > 0:
-                    w_modes[i, :] /= m
+                    w_modes[i, :] /= m # on divise chaque champ indépendamment, mode par mode, par son max (en val abs)
             if par.Nalpha > 0:
                 m = np.max(np.abs(alpha_modes[i, :]))
                 if m > 0:
                     alpha_modes[i, :] /= m
+        elif normalize =='per_mode':
+            # Facteur commun par mode i, pris sur TOUS les champs présents
+            candidates = []
+            if par.Nw > 0:
+                mw = np.max(np.abs(w_modes[i, :])) if Ny > 0 else 0.0
+                candidates.append(mw)
+            if par.Nalpha > 0:
+                ma = np.max(np.abs(alpha_modes[i, :])) if Ny > 0 else 0.0
+                candidates.append(ma)
+            scale = max(candidates) if candidates else 0.0
+
+            if scale > 0:
+                if par.Nw > 0:
+                    w_modes[i, :] /= scale
+                if par.Nalpha > 0:
+                    alpha_modes[i, :] /= scale
+
 
     return w_modes, alpha_modes
 
@@ -602,12 +699,11 @@ def ModalParamAtRest(par, normalize=True):
 
     eigvals, eigvecs = _eigs_sorted_positive_imag(A)
     freqs = np.imag(eigvals) / (2 * np.pi)
-    zeta = -np.real(eigvals) / np.abs(eigvals)
+    zeta = -np.real(eigvals) / np.abs(eigvals) # zeta = -p/sqrt(p²+wn²)
 
     w_modes, alpha_modes = _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=normalize)
+
     return freqs, zeta, eigvals, eigvecs, w_modes, alpha_modes
-
-
 
 ''' Dynamic '''
 
@@ -651,7 +747,7 @@ def stateMatrixAero(par,U,omega):
     
     return A
 
-def ModalParamDyn(par):
+def ModalParamDyn(par, normalize = 'per_mode'):
     '''
     Compute the modal parameters of the system for a range of wind speeds.
 
@@ -682,6 +778,13 @@ def ModalParamDyn(par):
     previous_omega = (omega_struc[1] + omega_struc[2])/2 # must be changed when we'll consider the v-DOF
     prev = []
 
+    # we keep the contributions of each DDL w, alpha for each U
+    # maybe we can only follow the modes [1] and [2], not the [0] and the others
+    Ny = len(par.y)
+    w_modes_U = np.zeros((len(U), par.Nq, Ny))
+    alpha_modes_U = np.zeros((len(U), par.Nq, Ny))
+    f_modes_U = np.zeros((len(U), par.Nq))
+
     for i in range(len(U)):
         prev.append(previous_omega)
         
@@ -692,76 +795,103 @@ def ModalParamDyn(par):
 
         eigvals, eigvecs = _eigs_sorted_positive_imag(A)
         w = np.imag(eigvals)
-        zeta = -np.real(eigvals) / np.abs(eigvals)
+        f0 = w/(2*np.pi)
+        p = np.real(eigvals)
+        zeta = -np.real(eigvals) / np.abs(eigvals) # = - real(lambda) / abs(lambda) = - real(lambda) / sqrt(real(lambda)^2 + imag(lambda)^2)
 
-        '''
-        eta is computed as eta = - real(lambda) / abs(lambda) = - real(lambda) / sqrt(real(lambda)^2 + imag(lambda)^2)
-        we compute it from the damped wb et not directly from w0
-        '''
+        '''necessary for the following modes'''
+        w_modes, alpha_modes = _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=normalize)
+        w_modes_U[i,:,:] = w_modes
+        alpha_modes_U[i,:,:] = alpha_modes
+        f_modes_U[i,:]=f0 #we keep the frenquecies of the Nq modes for each U
 
-        previous_omega = (w[1] + w[2])/2
+        
 
+        # modes index must be changed when we'll add the v-DOF
         # we only keep the 2nd [1] and 3rd [2] mode (usually it's the 2nd bending mode and 1st torsion mode)
-        f[i,0] = w[1] / (2*np.pi)
-        f[i,1] = w[2] / (2*np.pi)
-
-        damping[i,0] = zeta[1]
-        damping[i,1] = zeta[2]
-
-        realpart[i,0] = p[1]
-        realpart[i,1] = p[2]
-
-    return f, damping , realpart
 
 
+        # build identification vectors for all modes this step
+        curr_vecs = [_mode_id_vec(w_modes[j, :], alpha_modes[j, :]) for j in range(par.Nq)]
 
+        if i == 0:
+            # choose initial tracked indices and set references
+            tracked_idx = (1, 2)  # we follow the B2 and T1 mode
+            ''' /!\ We must check if we always have f(B2)<f(T1) at U=0 '''
+            prev_refs = [curr_vecs[tracked_idx[0]], curr_vecs[tracked_idx[1]]] # mode à U=0 deviennet notre ref pour la suite
+        else:
+            # assign by MAC against previous references
+            tracked_idx, MAC = _assign_by_mac(prev_refs, curr_vecs)
+            # update references
+            prev_refs = [curr_vecs[tracked_idx[0]], curr_vecs[tracked_idx[1]]]
+
+        # fill outputs for the tracked modes only
+        k0, k1 = tracked_idx
+        f[i, 0] = f0[k0]
+        f[i, 1] = f0[k1]
+        damping[i, 0] = zeta[k0]
+        damping[i, 1] = zeta[k1]
+        realpart[i, 0] = p[k0]
+        realpart[i, 1] = p[k1]
+
+        # keep omega ref near the followed modes (updating the reduced frequency for Theodorsen model)
+        previous_omega = 0.5 * (w[k0] + w[k1])
+
+    return f, damping , f_modes_U, w_modes_U, alpha_modes_U
 
 ''' Objectives computations'''
 
-def damping_crossing_slope(U, damping):
+def damping_crossing_slope(U, damping, return_status=False):
     '''
     Function to evaluate when the damping (of the Torsion mode) crosses 0,
     we also evaluate the slope when it crosses (if it crosses, otherwise near it)
-
+    
     In flutter case we always send the TORSION mode damping(U), 3rd mode of the struc
     when balancement is not considered (so usually 2nd column of damping from ROM evaluation)
     '''
     # damp_2d: shape (nU, n_modes)
     Uc_best = None
-    slope_best = None
+    slope_cross = None
 
+    d = np.asarray(damping, dtype=float)
+    s = np.gradient(d, U)
 
-    d = damping
     # look for the first possitive to negative crossing >0 -> <=0
-    trans = np.where((d[:-1] > 0.0) & (d[1:] <= 0.0))[0]
+    cross = np.where((d[:-1] > 0.0) & (d[1:] <= 0.0))[0]
 
     # If a crossing exists :
-    if trans.size > 0:
-        j = int(trans[0])
-        # linear interpolation to have a precise Uc
-        du = U[j+1] - U[j]
-        dd = d[j+1] - d[j]
-        if dd != 0:
-            alpha = -d[j] / dd
-            Uc = U[j] + alpha * du
-        else:
-            Uc = U[j]
-        slope = dd / du if du != 0 else 0.0
+    if cross.size > 0:
+        j = int(cross[0])
+        ''' # linear interpolation to have a precise Uc
+        # du = U[j+1] - U[j]
+        # dd = d[j+1] - d[j]
+        # if dd != 0:
+        #     alpha = -d[j] / dd
+        #     Uc = U[j] + alpha * du
+        # else:
+        #     Uc = U[j]
+        # slope = dd / du if du != 0 else 0.0
 
-        Uc_best = Uc
-        slope_best = slope_best
+        # Uc_best = Uc
+        # slope_best = slope_best
+        '''
 
-        return Uc_best, slope_best
-    else :  # if a crossing does not exist
-        slope_damping = np.gradient(d, U)
-        neg_idx = np.where(slope_damping < 0)[0]
+        Uc_best = U[j]
+        slope_cross = s[j]
+
+        return (Uc_best, slope_cross, 'cross') if return_status else (Uc_best, slope_cross)
+    else :  # if the damping doesn't cross 0
+        
+        neg_idx = np.where(s < 0)[0]
         if neg_idx.size > 0:
             #we take the lowest slopes among the negative ones
-            j = neg_idx[np.argmin(slope_damping[neg_idx])]
-            slope = slope_damping[j]
-            return None, slope
+            j = neg_idx[np.argmin(s[neg_idx])]
+            Uc_hat = U[j] - d[j] / s[j]
+            slope = s[j]
+            return (Uc_hat, slope, 'extrapolated') if return_status else (Uc_hat, slope)
+        
+
         else: # if we don't have negative slopes
-            # fallback: point le plus proche de 0, pente forcée à 0 si non négative
-            k = int(np.argmin(np.abs(d)))
-            slope = slope_damping[k] if slope_damping[k] < 0.0 else 0.0
-            return None, slope
+            slope = 0 # we put a default value if it doesn't cross and only >0
+            Uc = 70
+            return (Uc, slope, 'censored') if return_status else (Uc, slope)

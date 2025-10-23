@@ -10,11 +10,6 @@ import NACA
 from data_manager import save_modal_data, _load_npz
 from scipy.linalg import eigh
 
-
-
-# plt.close('all')
-# plt.ion()
-
 # modifie tous les parametres de matplotlib
 # --- Configuration globale Matplotlib ---
 # plt.rcParams.update({
@@ -25,7 +20,6 @@ from scipy.linalg import eigh
 #     'font.size': 11,                      # Taille globale du texte
 #     'axes.labelsize': 11,                 # Taille des labels d'axes
 # })
-
 
 #%% Set and run models, save data
 
@@ -70,11 +64,12 @@ eig_strucS2 = ROM.ModalParamAtRest(model_struc)
 model_struc.update(s=1.5)
 eig_strucS15 = ROM.ModalParamAtRest(model_struc)
 
-#%%___________________________________
-model = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t)
-# f, damping, _ = ROM.ModalParamDyn(model)
-
-# save_modal_data(f = f, damping = damping, model_params=model_theod,out_dir='data', filename='model_params_TheodorsenS2.npz')
+#%%___________________________________TEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEST
+s=1.5
+model = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t,'Theodorsen')
+f, damping, _ , _ , _ = ROM.ModalParamDyn(model)
+save_modal_data(f = f, damping = damping, model_params=model,out_dir='data', filename='model_test.npz')
+plotter.plot_modal_data_single(npz_path='data/model_test.npz')
 
 #%%________________________________________
 # #QuasiSteady model
@@ -101,23 +96,7 @@ hop= False
 if hop:
     plotter.plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz')
 
-    #%%------------------------------------------------
-
-
-    data = _load_npz('data/model_params_Theodorsen.npz')
-    fig, ax = plt.subplots()
-    ax.plot(data['U'], data['damping'][:, 0],label='0')
-    ax.plot(data['U'], data['damping'][:, 1],label = '1')
-    ax.legend()
-
-
-    data = _load_npz('data/model_params_Theodorsen.npz')
-    fig, ax = plt.subplots()
-    ax.plot(data['U'], data['f'][:, 0],label='0')
-    ax.plot(data['U'], data['f'][:, 1],label = '1')
-    ax.legend()
-
-    #%%--------------------------------------------------------
+#%%--------------------------------------------------------
 
     plotter.plot_modal_data_two(npz_path_a='data/model_params_Theodorsen.npz',
                         npz_path_b='data/model_params_QuasiSteady.npz')
@@ -134,25 +113,38 @@ NACA.plot_naca00xx_section_with_cg(t_c=0.15, c=c, N=4000, xcg=x_cg, fill=True, a
 # plot mode shape
 
 # Modèle structurel seul (sans aéro)
+s=2
 model_struc = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t)
-f0, zeta0, eig0, V0, W0, A0 = ROM.ModalParamAtRest(model_struc, normalize=True)
-plotter.plot_mode_shapes_grid(y=model_struc.y, freqs_hz=f0, W=W0, ALPHA=A0, normalize='per_field', suptitle='Modes structurels')
-# Modèle aéroélastique à U=20 m/s (Theodorsen par défaut)
-# model_theod = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, 'Theodorsen')
-# fU, zetaU, eigU, VU, WU, AU = ROM.ModalShapesDyn(model_theod, U=20.0, normalize=True)
+f0, zeta0, eig0, V0, w_modes, alpha_modes = ROM.ModalParamAtRest(model_struc, normalize='per_mode') # normalize = 'per_field' or 'per_mode'
+plotter.plot_mode_shapes_grid(y=model_struc.y, freqs_hz=f0, W=w_modes, ALPHA=alpha_modes, normalize=False, suptitle='Structural mode shape contribution')
 
-# Visualiser, par ex. le 3e mode (i=2) :
-# i = 1
-# y = model_struc.y
-# plt.figure()
-# plt.plot(y, W0[i, :], label='w_i(y) at rest')
-# plt.plot(y, A0[i, :], label='alpha_i(y) at rest')
-# plt.legend(); plt.grid(True, alpha=0.4); plt.title('Modes structurels')
 
-# plt.figure()
-# plt.plot(y, WU[i, :], label='w_i(y) at U=20 m/s')
-# plt.plot(y, AU[i, :], label='alpha_i(y) at U=20 m/s')
-# plt.legend(); plt.grid(True, alpha=0.4); plt.title('Modes aéroélastiques')
-# plt.show()
+
+
+
+
+# %%_____________________________________________________________________________
+s=1.5
+
+
+model_struc = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t,'Theodorsen')
+# model_struc.Umax = 100                          # Maximum velocity of the IAT wind tunnel
+# model_struc.steps = 200                        # Number of velocity steps
+# model_struc.U = np.linspace(0.1, model_struc.Umax, model_struc.steps)
+
+f, damping , f_modes_U , w_modes_U, a_modes_U = ROM.ModalParamDyn(model_struc,normalize=None) # normalize = None or 'per_field' or 'per_mode'
+
+save_modal_data(f = f, damping = damping, model_params=model_struc,out_dir='data', filename='model_test.npz')
+plotter.plot_modal_data_single(npz_path='data/model_test.npz')
+
+# mode shape contributions plot
+plotter.plot_mode_shapes_over_U_grid(y=model_struc.y,U=model_struc.U,
+                                    WU=w_modes_U, # shape (nU, n_modes, Ny), déjà normalisé si souhaité
+                                    ALPHAU=a_modes_U, # idem
+                                    f_modes_U=f_modes_U,
+                                    mode_indices=[2,3], # modes #2 et #3 (1- ou 0-based accepté)
+                                    n_samples=10,
+                                    sharey=True, 
+                                    suptitle='Aeroelastic mode shapes across U')
 
 # %%

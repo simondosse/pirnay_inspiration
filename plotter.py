@@ -27,7 +27,7 @@ def plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz'):
 
     # Couleurs et labels par mode
     colors = ['blue', 'red']      # 0 -> T1, 1 -> B2
-    mode_labels = ['2nd mode', '3rd mode']
+    mode_labels = ['B2', 'T1']
 
     # Figure
     fig, ax = plt.subplots(2, 1, sharex=True, constrained_layout=True)
@@ -92,7 +92,7 @@ def plot_modal_data_two(npz_path_a='data/model_params_Theodorsen.npz',
     #------ Fixed colors and labels per mode---
     colors = ['blue', 'red']  # 0 -> T1, 1 -> B2
     # mode_labels = ['B2', 'T1']
-    mode_labels = ['2nd mode', '3rd mode']
+    mode_labels = ['B2', 'T1']
     #------------------------------------------
 
     # Create figure with shared x-axis
@@ -161,7 +161,7 @@ def plot_params_table(npz_path: str):
     plt.tight_layout()
     plt.show()
 
-def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize='per_mode',colors=None,styles=None,sharey=True,figsize=None,suptitle=None,show=True):
+def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize=False,colors=None,styles=None,sharey=True,figsize=None,suptitle=None,show=True):
     '''
     Trace les formes modales par mode, en colonnes :
     | Mode 1 (f=...) | Mode 2 (f=...) | Mode 3 (f=...) | ...
@@ -181,7 +181,7 @@ def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize=
     extras : dict[str, np.ndarray] or None
         Champs additionnels par mode, ex. {'v': V} avec V shape (n_modes, Ny).
     normalize : {'per_mode','per_field', None}
-        - 'per_mode'  : normalise toutes les courbes d’un même mode par le max absolu parmi les champs présents
+        - 'per_mode'  : normalise toutes les courbes d'un même mode par le max absolu parmi les champs présents
         - 'per_field' : normalise chaque champ indépendamment (par son propre max absolu)
         - None        : pas de normalisation
     colors : dict[str, str] or None
@@ -200,8 +200,15 @@ def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize=
     Retour
     ------
     fig, axes : matplotlib Figure et Axes
+
+
+    En vrai l'arg "normalize" ne sert à rien comme on traite l'amplitude des ces vecteurs en amont
     '''
 
+    if normalize :
+        sharey=True # on partage les axes que si y'a normalization
+    else:
+        sharey=False
 
     # Construire la collection de champs à tracer
     fields = []
@@ -245,7 +252,7 @@ def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize=
 
     # Figure
     if figsize is None:
-        figsize = (max(5.0, 3.0 * n_modes), 3.2)  # largeur ~3 par mode
+        figsize = (max(5.0, 3.0 * n_modes), 3.4)  # largeur ~3 par mode
     fig, axes = plt.subplots(1, n_modes, sharey=sharey, figsize=figsize, constrained_layout=True)
     if n_modes == 1:
         axes = np.array([axes])
@@ -253,28 +260,9 @@ def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize=
     # Boucle sur les modes (colonnes)
     for i in range(n_modes):
         ax = axes[i]
-
-        # Prépare normalisation
-        if normalize == 'per_mode':
-            # max absolu sur tous les champs présents pour ce mode i
-            acc = []
-            for _, mat in fields:
-                acc.append(np.max(np.abs(mat[i, :])))
-            scale = np.max(acc) if len(acc) > 0 else 1.0
-            if scale == 0:
-                scale = 1.0
-
         # Traces des champs
         for name, mat in fields:
             curve = np.array(mat[i, :], dtype=float)
-
-            if normalize == 'per_field':
-                s = np.max(np.abs(curve))
-                if s > 0:
-                    curve = curve / s
-            elif normalize == 'per_mode':
-                curve = curve / scale
-
             ax.plot(y, curve, color=colors[name], linestyle=styles[name], lw=1.3, label=name)
 
         # Titres / axes
@@ -297,4 +285,207 @@ def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize=
 
     return fig, axes
 
+def plot_mode_shapes_over_U_grid(y, U, WU=None, ALPHAU=None, f_modes_U=None,
+                                 mode_indices=None, n_samples=10,
+                                 colors=None, styles=None,
+                                 sharey=True, figsize=None,
+                                 suptitle=None, show=True,):
+    """
+    Plot spatial mode shapes (w and alpha) for multiple wind speeds in a grid.
+
+    Inputs
+    ------
+    y : array-like, shape (Ny,)
+        Spanwise coordinate array.
+    U : array-like, shape (nU,)
+        Wind speed samples corresponding to WU/ALPHAU.
+    WU : array-like or None, shape (nU, n_modes, Ny)
+        Bending shapes w_i(y) reconstructed at each U. If None, only alpha is plotted.
+    ALPHAU : array-like or None, shape (nU, n_modes, Ny)
+        Torsion shapes alpha_i(y) reconstructed at each U. If None, only w is plotted.
+    f_modes_U : array-like or None, shape (nU, n_modes)
+        Modal frequencies (Hz) per mode and U. If provided, each subplot
+        is annotated with its corresponding frequency.
+    mode_indices : list[int] or None
+        Modes to plot. Defaults to all available modes.
+        - Accepts 0-based indices (e.g., [0, 1, 2]).
+        - Also accepts 1-based indices (e.g., [1, 2, 3]); detection is automatic:
+        if all(idx >= 1) and max(idx) <= n_modes, they are treated as 1-based.
+    n_samples : int
+        Number of U samples to plot, evenly spaced from U[0] to U[-1]. Clipped to len(U).
+    colors : dict[str, str] or None
+        Colors per field name. Defaults: {'w':'C0', 'alpha':'C1'}.
+    styles : dict[str, str] or None
+        Line styles per field name. Defaults: {'w':'-', 'alpha':'--'}.
+    sharey : bool
+        Share Y axis across subplots. Keep False if you already normalized upstream.
+    figsize : (float, float) or None
+        Figure size. Defaults to (3.0 * n_modes, 2.6 * n_rows), clamped to reasonable minimums.
+    suptitle : str or None
+        Global figure title.
+    show : bool
+        If True, calls plt.show().
+
+    Returns
+    -------
+    fig, axes : matplotlib Figure and Axes array of shape (n_rows, n_cols)
+
+    Notes
+    -----
+    - WU/ALPHAU are expected as (nU, n_modes, Ny) from your ModalParamDyn.
+    - Each subplot overlays w and alpha for a single (mode, U) pair.
+    Columns = modes; rows = selected U’s.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    if WU is None and ALPHAU is None:
+        raise ValueError("Provide at least one of WU or ALPHAU.")
+
+    if WU is not None:
+        WU = np.asarray(WU)
+    if ALPHAU is not None:
+        ALPHAU = np.asarray(ALPHAU)
+
+    U = np.asarray(U).ravel()
+    y = np.asarray(y).ravel()
+    nU = U.size
+    Ny = y.size
+
+    # Infer n_modes and validate shapes
+    n_modes_candidates = []
+    if WU is not None:
+        if WU.ndim != 3:
+            raise ValueError("WU must have shape (nU, n_modes, Ny).")
+        if WU.shape[0] != nU or WU.shape[2] != Ny:
+            raise ValueError(f"WU shape mismatch: got {WU.shape}, expected (nU={nU}, n_modes, Ny={Ny}).")
+        n_modes_candidates.append(WU.shape[1])
+    if ALPHAU is not None:
+        if ALPHAU.ndim != 3:
+            raise ValueError("ALPHAU must have shape (nU, n_modes, Ny).")
+        if ALPHAU.shape[0] != nU or ALPHAU.shape[2] != Ny:
+            raise ValueError(f"ALPHAU shape mismatch: got {ALPHAU.shape}, expected (nU={nU}, n_modes, Ny={Ny}).")
+        n_modes_candidates.append(ALPHAU.shape[1])
+    if f_modes_U is not None:
+        f_modes_U = np.asarray(f_modes_U)
+        if f_modes_U.ndim != 2 or f_modes_U.shape[0] != nU:
+            raise ValueError(
+                f"f_modes_U must have shape (nU, n_modes). Got {getattr(f_modes_U, 'shape', None)} with nU={nU}."
+            )
+        n_modes_candidates.append(f_modes_U.shape[1])
+
+    if not n_modes_candidates:
+        raise ValueError("Cannot infer number of modes. Provide WU and/or ALPHAU with valid shapes.")
+    n_modes_total = int(min(n_modes_candidates))  # safe choice if shapes differ slightly
+
+    # Select modes
+    if mode_indices is None:
+        mode_indices_0 = list(range(n_modes_total))
+    else:
+        idx = np.asarray(mode_indices, dtype=int).ravel().tolist()
+        if len(idx) > 0 and min(idx) >= 1 and max(idx) <= n_modes_total:
+            mode_indices_0 = [k - 1 for k in idx]  # convert 1-based to 0-based
+        else:
+            mode_indices_0 = idx
+        for k in mode_indices_0:
+            if k < 0 or k >= n_modes_total:
+                raise ValueError(f"Mode index {k} out of range [0, {n_modes_total-1}].")
+
+    n_cols = len(mode_indices_0)
+    if n_cols == 0:
+        raise ValueError("No modes selected to plot.")
+
+    # Pick evenly spaced U indices
+    n_rows = int(min(max(1, n_samples), nU))
+    idx_rows = np.linspace(0, nU - 1, n_rows, dtype=int)
+    idx_rows = np.unique(idx_rows)
+    n_rows = idx_rows.size
+
+    # Colors / styles defaults
+    if colors is None:
+        colors = {}
+    if styles is None:
+        styles = {}
+    colors.setdefault('w', 'C0')
+    colors.setdefault('alpha', 'C1')
+    styles.setdefault('w', '-')
+    styles.setdefault('alpha', '--')
+
+    # Figure sizing
+    if figsize is None:
+        figsize = (max(5.0, 3.0 * n_cols), max(3.0, 1.3 * n_rows))
+
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        sharey=sharey,
+        figsize=figsize,
+        constrained_layout=True
+    )
+    if n_rows == 1 and n_cols == 1:
+        axes = np.array([[axes]])
+    elif n_rows == 1:
+        axes = axes.reshape(1, n_cols)
+    elif n_cols == 1:
+        axes = axes.reshape(n_rows, 1)
+
+    # Plot
+    for r, iu in enumerate(idx_rows):
+        Uval = float(U[iu])
+        for c, kmode in enumerate(mode_indices_0):
+            ax = axes[r, c]
+
+            # w field
+            if WU is not None:
+                ax.plot(
+                    y, np.asarray(WU[iu, kmode, :], dtype=float),
+                    color=colors.get('w', 'C0'),
+                    linestyle=styles.get('w', '-'),
+                    lw=1.3,
+                    label='w'
+                )
+            # alpha field
+            if ALPHAU is not None:
+                ax.plot(
+                    y, np.asarray(ALPHAU[iu, kmode, :], dtype=float),
+                    color=colors.get('alpha', 'C1'),
+                    linestyle=styles.get('alpha', '--'),
+                    lw=1.3,
+                    label='alpha'
+                )
+
+            # Titles / labels
+            if r == 0:
+                ax.set_title(f"Mode {kmode+1}")
+            if c == 0:
+                ax.set_ylabel(f"U = {Uval:.2f} m/s")
+            if r == n_rows - 1:
+                ax.set_xlabel("y [m]")
+
+            ax.grid(True, linewidth=0.3, alpha=0.5)
+
+            # Annotate frequency if provided
+            if f_modes_U is not None:
+                try:
+                    fval = float(f_modes_U[iu, kmode])
+                    if np.isfinite(fval):
+                        ax.text(
+                            0.98, 0.06, f"f = {fval:.2f} Hz",
+                            transform=ax.transAxes,
+                            ha='right', va='bottom', fontsize=9, color='0.35'
+                        )
+                except Exception:
+                    pass
+
+            # Legend only on the last subplot
+            if (r == n_rows - 1) and (c == n_cols - 1):
+                ax.legend(frameon=False)
+
+    if suptitle:
+        fig.suptitle(suptitle, y=1.02)
+
+    if show:
+        import matplotlib.pyplot as plt
+        plt.show()
+
+    return fig, axes
 

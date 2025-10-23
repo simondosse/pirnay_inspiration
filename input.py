@@ -79,14 +79,16 @@ class ModelParameters:
         self.y = np.arange(0, s, self.dy)       # Spatial discretization vector
         self.Nw = 3                             # Number of bending modes
         self.Nalpha = 3                         # Number of torsional modes
+        self.Nq = self.Nw+self.Nalpha
+        self.nDOF = 2
 
         # Aerodynamic parameters
         self.rho_air = 1.204                    # Air density
         self.dCn = 4                          # Normal force coefficient
         self.dCm = 0.5                         # Moment coefficient
         # actually the dCm shoudn't be constant, in the stall region the curve is not linear anymore
-        self.Umax = 35                          # Maximum velocity of the IAT wind tunnel
-        self.steps = 100                        # Number of velocity steps
+        self.Umax = 40                          # Maximum velocity of the IAT wind tunnel
+        self.steps = 80                        # Number of velocity steps
         self.U = np.linspace(0.1, self.Umax, self.steps)
 
         if model_aero not in ['Theodorsen', 'QuasiSteady']:
