@@ -1,11 +1,11 @@
 import numpy as np
-
+import NACA
 class ModelParameters:
     """
     Define the parameters of the model.
     """
 
-    def __init__(self,s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, model_aero = 'Theodorsen'):
+    def __init__(self,s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, model_aero = 'Theodorsen'):
         ''' 
         Initialize the model parameters.
 
@@ -40,21 +40,20 @@ class ModelParameters:
         model_aero : str
             Aerodynamic model to use ('Theodorsen' or 'QuasiSteady')
         '''
-        
+
         # Geometric parameters
         self.s = s                              # Half-span 
         self.c = c                              # Chord 
         self.b = c / 2                          # Semi-chord
+        self.NACA = NACA(c=c,t_c=0.15,m=m,x_ea=x_ea,x_cg=x_cg)
 
         self.x_ea = x_ea                        # Elastic axis location
         self.x_cg = x_cg                        # Inertial axis location
         self.x_alpha = x_cg - x_ea              # Distance between ea and cg
         self.a = (self.x_ea / self.b) - 1       # Non-dimensional ea location
-        self.tc = 0.15                          # Thickness-to-chord ratio (default 15%) NACA0015
 
         # Structural parameters
         self.m = m                              # Mass per unit length
-        self.I_alpha = I_alpha                  # Torsional inertia per unit length
         self.EIx = EIx                          # Bending stiffness 
         self.GJ = GJ                            # Torsional stiffness
         self.eta_w = eta_w                      # Bending damping ratio
@@ -84,7 +83,9 @@ class ModelParameters:
 
         # Aerodynamic parameters
         self.rho_air = 1.204                    # Air density
-        self.dCn = 4                          # Normal force coefficient
+
+        # the following coeffs should depend on the NACA profile
+        self.dCn = 4                          # Normal force coefficient, normalement c'est 2pi pour une aile infinie, pour une aile finie on la correction a0 / (1 + a0/(π e AR))
         self.dCm = 0.5                         # Moment coefficient
         # actually the dCm shoudn't be constant, in the stall region the curve is not linear anymore
         self.Umax = 40                          # Maximum velocity of the IAT wind tunnel
@@ -98,12 +99,43 @@ class ModelParameters:
 
 
 
-    def update(self, **kwargs):
-        for key, value in kwargs.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-            else:
-                raise AttributeError(f"Parameter has no attribute '{key}'")
-        '''
-        it should also update the dependent parameters like x_alpha and a if x_ea or x_cg are updated
-        '''
+def update(self, **kwargs):
+    changed = set()
+    for key, value in kwargs.items():
+        if hasattr(self, key):
+            setattr(self, key, value)
+            changed.add(key)
+        else:
+            raise AttributeError(f"Parameter has no attribute '{key}'")
+
+    # Géométrie
+    if 'c' in changed:
+        self.b = self.c / 2
+    if ('x_ea' in changed) or ('x_cg' in changed) or ('c' in changed):
+        self.x_alpha = self.x_cg - self.x_ea
+        self.a = (self.x_ea / self.b) - 1
+
+    # Discrétisation
+    if ('s' in changed) or ('dy' in changed):
+        self.y = np.arange(0, self.s, self.dy)
+
+    # Modes
+    if ('Nw' in changed) or ('Nalpha' in changed):
+        self.Nq = self.Nw + self.Nalpha
+
+    # Aérodynamique
+    if 'model_aero' in changed:
+        if self.model_aero not in ['Theodorsen', 'QuasiSteady']:
+            raise ValueError("model_aero must be either 'Theodorsen' or 'QuasiSteady'")
+
+    # Vitesse tunnel
+    if ('Umax' in changed) or ('steps' in changed):
+        self.U = np.linspace(0.1, self.Umax, self.steps)
+
+    # Masse en bout d’aile
+    if ('Mt' in changed) or ('I_alpha_t' in changed) or ('x_t' in changed):
+        self.has_tip = (self.Mt is not None) and bool(self.Mt)
+        if not self.has_tip:
+            self.Mt = 0
+            self.I_alpha_t = 0
+            self.x_t = 0
