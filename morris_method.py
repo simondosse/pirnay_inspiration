@@ -62,7 +62,7 @@ def generate_trajectories(problem,nb_lvl=4,nb_traj_opti=6,seed=2):
     return trajectories
 
 
-def resultat(problem, trajectories, out, nb_lvl, title, cas, basePath='L:\\ZDO\\', split_graph=False,save=False):
+def resultat(problem, trajectories, out, nb_lvl, title, cas, split_graph=False,save=False):
     
     '''
     Fonction pour 
@@ -103,9 +103,7 @@ def resultat(problem, trajectories, out, nb_lvl, title, cas, basePath='L:\\ZDO\\
     fig1.tight_layout()
     plt.show()
     
-    name1 = basePath + '_Python\\save_plot_morris\\' +cas+'\\'+ f'scatterPlot_MuSigma_{title}_{cas}'
-    if save:
-        fig1.savefig(name1)
+
 
     # --- Figure 2 : barplot des mu_star triés ---
     sorted_indices = np.argsort(results['mu_star'])[::-1]
@@ -114,8 +112,7 @@ def resultat(problem, trajectories, out, nb_lvl, title, cas, basePath='L:\\ZDO\\
     sorted_names_latex = [f"${name}$" for name in sorted_names]
 
     nb_para = len(sorted_mu_star)
-    name2 = basePath + '_Python\\save_plot_morris\\' +cas+'\\'+ f'barPlot_Sigma_{title}_{cas}'
-    
+
     # si on a trop de paramètres on peut tout split en 2 graph
     if split_graph==False and nb_para > 24 :
         split_graph = True
@@ -158,16 +155,13 @@ def resultat(problem, trajectories, out, nb_lvl, title, cas, basePath='L:\\ZDO\\
         ax2.tick_params(axis='y', labelsize=9)
         fig2.subplots_adjust(left=0.4)
         fig2.tight_layout()
-        if save:
-            fig2.savefig(name2)
         plt.show()
         
     elementary_effect = morris_analyze._compute_elementary_effects(model_inputs = trajectories, model_outputs=out, trajectory_size=len(trajectories), delta=1/3)
     
     return results,elementary_effect
 
-
-def funnel_graph(basePath, obj_names, obj_units, results_sensitivity, problem_AS, F, cas, nb_para_var,
+def funnel_graph(obj_names, obj_units, results_sensitivity, problem_AS, F, cas, nb_para_var,
                  save_figures=False, log_scale=False, split_graph = False):
     """
     Génère les graphiques type entonnoir
@@ -204,11 +198,10 @@ def funnel_graph(basePath, obj_names, obj_units, results_sensitivity, problem_AS
         A.append(get_sensitivity_plot_data(results_sensitivity, problem_AS['names'], objective_index=objective_index))
 
     # Labels
-    xlabels = [f"Variation in {obj_units[0, i] if obj_units[0, i] != ' ' else '∅'}" for i in range(obj_units.shape[1])]
-    titles = [f"Sensitivity {obj_names[0, i]} {cas}" for i in range(obj_names.shape[1])]
+    xlabels = [f"Variation in {obj_units[i] if obj_units[i] != ' ' else '∅'}" for i in range(obj_units.shape[0])]
+    titles = [f"Sensitivity {obj_names[i]} {cas}" for i in range(obj_names.shape[0])]
 
-    xlims = [None] * obj_names.shape[1]
-    plot_names = [basePath + '_Python\\save_plot_morris\\'+cas+'\\'f'sensitivity_obj_{obj_names[0, i]}_{cas}.pdf' for i in range(obj_names.shape[1])]
+    xlims = [None] * obj_names.shape[0]
 
     # Plotting
     for k, a in enumerate(A):
@@ -237,7 +230,7 @@ def funnel_graph(basePath, obj_names, obj_units, results_sensitivity, problem_AS
                 plt.scatter(a[3][start:end], a[1][start:end], s=150, marker="*", c='blue', label=r"$\sigma_{EE}$")
     
                 for param_index in range(start, end):
-                    plt.annotate(f"${round(a[2][param_index], ndigits=1)}$ {obj_units[0, k]}",
+                    plt.annotate(f"${round(a[2][param_index], ndigits=1)}$ {obj_units[k]}",
                                  (a[2][param_index] * 0.8, a[1][param_index] + 0.15),
                                  fontsize=10., color='red')
     
@@ -282,7 +275,7 @@ def funnel_graph(basePath, obj_names, obj_units, results_sensitivity, problem_AS
             
             # Annotations for each parameter
             for param_index in range(nb_para_var):
-                plt.annotate(f"${round(a[2][param_index], ndigits=1)}$ {obj_units[0, k]}",
+                plt.annotate(f"${round(a[2][param_index], ndigits=1)}$ {obj_units[k]}",
                              (a[2][param_index] * 0.8, a[1][param_index] + 0.15),
                              fontsize=10., color='red')
     
@@ -313,8 +306,6 @@ def funnel_graph(basePath, obj_names, obj_units, results_sensitivity, problem_AS
             plt.tight_layout()
             plt.savefig(plot_names[k])
         # plt.close()
-
-
 
 def get_sensitivity_plot_data(results_sensitivity,
                               list_of_parameters_names,

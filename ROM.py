@@ -2,24 +2,17 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.integrate import quad
 from scipy.special import kv
+import itertools
 
-''' General functions calculations'''
-
-# def _eigs_sorted_positive_imag(A):
-#     eigvals, eigvecs = np.linalg.eig(A)
-#     eigvals_raw, eivecs_raw = eigvals, eigvecs
-#     sel = np.where(np.imag(eigvals) >=0)[0]
-#     eigvals = eigvals[sel]
-#     eigvecs = eigvecs[:, sel]
-#     idx = np.argsort(np.abs(np.imag(eigvals)))  # tri par fréquence croissante
-
-#     if len(eigvals) != 6:
-#         raise ValueError(f"number of eigvalues ({len(eigvals)}) != len(A) ({len(A)}).")
-#     return eigvals[idx], eigvecs[:, idx]
+''' General functions '''
 
 def _eigs_sorted_positive_imag(A, Nq=None):
-    eigvals, eigvecs = np.linalg.eig(A)
+    eigvals, eigvecs = np.linalg.eig(A) # est-ce que ça renvoie déjà 
 
+    # normalisation des vecteurs propres ?
+    # print(eigvecs)
+    # eigvecs = eigvecs / np.linalg.norm(eigvecs,axis=0)
+    # print(eigvals)
     # On prend un élément sur deux : un représentant par paire conjuguée,
     # de base np.linalg.eig() nous renvoie les paires à la suite des autres
     eigvals = eigvals[::2]
@@ -98,15 +91,22 @@ def _assign_by_mac(prev_refs, curr_vecs):
         for j in range(N):
             MAC[k, j] = _mac(prev_refs[k], curr_vecs[j]) #we fill the MAX matrix
     # exhaustive assignment for K=2 (robust and simple)
-    best = (-np.inf, None)
-    for j0 in range(N):
-        for j1 in range(N):
-            if j1 == j0: # on va regarde le MAC pour toutes les paires possibles (sauf autoMAC ofc)
-                continue
-            score = MAC[0, j0] + MAC[1, j1] #on somme le MAC de MAC(w,c1) et MAC(alpha,c1) car le mode c'est la somme des contributions
-            if score > best[0]:
-                best = (score, (j0, j1)) #on garde le meilleur
-    return best[1], MAC
+    best_score = -np.inf
+    # best_cols = None
+    # for j0 in range(N):
+    #     for j1 in range(N):
+    #         if j1 == j0: # on va regarde le MAC pour toutes les paires possibles (sauf autoMAC ofc)
+    #             continue
+    #         score = MAC[0, j0] + MAC[1, j1] #on somme le MAC de MAC(w,c1) et MAC(alpha,c1) car le mode c'est la somme des contributions
+    #         if score > best[0]:
+    #             best = (score, (j0, j1)) #on garde le meilleur
+    # return best[1], MAC
+    for cols in itertools.permutations(range(N), K):
+        score = sum(MAC[k, cols[k]] for k in range(K))
+        if score > best_score:
+            best_score = score
+            best_cols = cols
+    return tuple(best_cols), MAC
 
 ''' General functions to compute the mode shapes and modal matrices '''
 
@@ -137,7 +137,7 @@ def bendingModeShapes(par):
     if par.has_tip is True:     # Case with added mass on the tip, beta values are computed by evaluating the characteristic equation 
 
         b = np.linspace(0, n*np.pi, n*10000)
-        func = 1 + (np.cos(b * par.s) * np.cosh(b * par.s)) + (par.Mt * b/par.m) * (np.sinh(b * par.s)*np.cos(b * par.s) - np.sin(b * par.s)*np.cosh(b * par.s))
+        func = 1 + (np.cos(b * par.s) * np.cosh(b * par.s)) + (par.Mt * b/par.airfoil.m) * (np.sinh(b * par.s)*np.cos(b * par.s) - np.sin(b * par.s)*np.cosh(b * par.s))
 
         func_target = []
         for i in range(len(func)-1):   # To find intersection, we look for a change of sign
@@ -181,7 +181,7 @@ def bendingModeShapes(par):
         b_ = np.cos(beta[i] * par.y) + np.cosh(beta[i] * par.y)
         phi_dotdot = - (a_ - gamma * b_) * (beta[i]**2)
 
-        modal_mass =  np.trapezoid(par.m*phi**2, par.y) # ∫ m(y) φ(y)² dy
+        modal_mass =  np.trapezoid(par.airfoil.m*phi**2, par.y) # ∫ m(y) φ(y)² dy
 
         phi_normalized.append(phi)#/np.sqrt(modal_mass))
         phi_dot_normalized.append(phi_dot)#/np.sqrt(modal_mass))
@@ -215,7 +215,7 @@ def torsionModeShapes(par):
 
     if par.has_tip is True:         # Case with added mass on the tip, beta values are computed by evaluating the characteristic equation
         b = np.linspace(0.01, n*np.pi, n*10000)
-        func = np.tan(b * par.s) - (par.I_alpha * par.s / par.I_alpha_t) * 1/(b * par.s)
+        func = np.tan(b * par.s) - (par.airfoil.Ialpha_EA * par.s / par.I_alpha_t) * 1/(b * par.s)
         func_target = []
 
         for i in range(len(func)-1):
@@ -251,16 +251,144 @@ def torsionModeShapes(par):
 
     return phi_normalized, phi_dot_normalized, phi_dotdot_normalized
 
+def build_state_q_from_real(par, w_tip=0.0, alpha_tip=0.0, wdot_tip=0.0, alphadot_tip=0.0):
+    """
+    Construit x0 (2*(Nv+Nw+Nalpha),) à partir de conditions initiales
+    physiques en bout de poutre: w_tip (m) et alpha_tip (rad), et leurs vitesses.
+    Pour ne pas passer pas les q_w et q_alpha qui sont peu intuitif
+
+    Paramètres
+    ----------
+    par : ModelParameters
+        Doit fournir Nw, Nalpha, (optionnellement Nv) et y.
+    w_tip : float
+        Déflexion en bout (y = s) au temps t=0.
+    alpha_tip : float
+        Rotation en bout (rad) au temps t=0.
+    wdot_tip : float
+        Vitesse de déflexion en bout.
+    alphadot_tip : float
+        Vitesse de rotation en bout.
+
+    Retour
+    ------
+    x0 : ndarray shape (2*(Nv+Nw+Nalpha),)
+        Etat initial [q ; qdot] avec q = [qv, qw, qa].
+    """
+    import numpy as np
+
+    Nv = par.Nv
+    Nw = par.Nw
+    Nalpha = par.Nalpha
+    n_q = Nv + Nw + Nalpha
+    x0 = np.zeros(2 * n_q, dtype=float)
+
+    # Récupère formes modales (discrètes sur par.y), tip = dernier point
+    phi_w, _, _ = bendingModeShapes(par)
+    phi_a, _, _ = torsionModeShapes(par)
+    tip_idx = -1
+
+    # Vecteurs de formes au tip
+    if Nw > 0:
+        phi_w_tip = np.array([phi_w[i][tip_idx] for i in range(Nw)], dtype=float).reshape(1, -1)
+        # phi_w_tip @ qw = w_tip  -> solution min-norme
+        '''
+        On cherche donc le vecteur qw qui, combiné avec les valeurs des modes au tip, reproduit le déplacement souhaité.
+        il n'y pas une solution unique à qw = phi_w_tip^-1 @ w_tip,
+        on cherche donc la solution de norme minimal grâce à la fonction np.linalg.lstsq qui utilise la pseudo inverse
+
+        qw = argmin||q||_2 such as Phi_w(tip)q = w(tip)
+
+        '''
+        qw, *_ = np.linalg.lstsq(phi_w_tip, np.array([w_tip], dtype=float), rcond=None)
+        x0[Nv:Nv + Nw] = qw.ravel()
+    if Nalpha > 0:
+        phi_a_tip = np.array([phi_a[i][tip_idx] for i in range(Nalpha)], dtype=float).reshape(1, -1)
+        qa, *_ = np.linalg.lstsq(phi_a_tip, np.array([alpha_tip], dtype=float), rcond=None)
+        x0[Nv + Nw:Nv + Nw + Nalpha] = qa.ravel()
+
+    # Vitesses au tip -> qdot via mêmes formes
+    if Nw > 0:
+        qwdot, *_ = np.linalg.lstsq(phi_w_tip, np.array([wdot_tip], dtype=float), rcond=None)
+        x0[n_q + Nv:n_q + Nv + Nw] = qwdot.ravel()
+    if Nalpha > 0:
+        qadot, *_ = np.linalg.lstsq(phi_a_tip, np.array([alphadot_tip], dtype=float), rcond=None)
+        x0[n_q + Nv + Nw:n_q + Nv + Nw + Nalpha] = qadot.ravel()
+
+    return x0
+
+def _modal_to_physical_fields(par, qw_t, qa_t, return_shapes=False):
+    """
+    Convertit les coordonnées modales (qw, qa) en champs physiques w(y,t), alpha(y,t).
+    EN TEMPOREL
+    w(y,t) = Phiw(y) @ qw(t)
+
+    Paramètres
+    ----------
+    par : ModelParameters
+        Doit fournir y, Nw, Nalpha.
+    qw_t : ndarray (nt, Nw) ou (Nw,)
+        Coordonnées modales en flexion.
+    qa_t : ndarray (nt, Nalpha) ou (Nalpha,)
+        Coordonnées modales en torsion.
+    return_shapes : bool
+        Si True, retourne aussi (Phi_w, Phi_alpha).
+
+    Retours
+    -------
+    w_map : ndarray (nt, Ny)
+    alpha_map : ndarray (nt, Ny)
+    (optionnel) Phi_w : ndarray (Nw, Ny)
+    (optionnel) Phi_alpha : ndarray (Nalpha, Ny)
+    """
+    import numpy as np
+
+    Nw = par.Nw
+    Nalpha = par.Nalpha
+
+    # Garantir 2D (nt, N*)
+    qw_t = np.atleast_2d(qw_t)
+    qa_t = np.atleast_2d(qa_t)
+
+    # Récupère et empile les formes modales
+    phi_w, _, _ = bendingModeShapes(par)      # liste de Nw vecteurs (Ny,)
+    phi_a, _, _ = torsionModeShapes(par)      # liste de Nalpha vecteurs (Ny,)
+
+    Ny = len(par.y)
+    Phi_w = np.vstack(phi_w)
+    Phi_a = np.vstack(phi_a)
+
+    # Champs physiques
+    w_map = qw_t @ Phi_w
+    alpha_map = qa_t @ Phi_a
+
+    if return_shapes:
+        return w_map, alpha_map, Phi_w, Phi_a
+    return w_map, alpha_map
+
 def _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=None):
     """
     eigvecs: colonnes = modes (taille 2(Nw+Nalpha) x n_modes) ; on utilise la partie positions.
     Retourne: w_modes, alpha_modes de tailles (n_modes, Ny).
+    Phi
     """
     # print("Calcule des contributions des ddl par mode")
     # print(f"normalize = {normalize}")
     Nq = par.Nw + par.Nalpha
     Vq = eigvecs[:Nq, :]  # partie positions, notre vecteur d'état est [qw1 qw2 qw3 qa1 qa2 qa3 qw1' qw2' qw3' qa1' qa2' qa3']'
     nm = Vq.shape[1]
+
+    # energy_type = None
+    # if normalize in ('energy', 'energy_mass', 'mass'):
+    #     energy_type = 'mass'
+    #     Mq = getStructuralMassMatrix(par)
+    # elif normalize in ('energy_stiffness', 'stiffness'):
+    #     energy_type = 'stiffness'
+    #     Kq = getStructuralStiffness(par)
+
+    Mq = getStructuralMassMatrix(par)
+    Kq = getStructuralStiffness(par)
+    energy_type='mass'
 
     phi_w, _, _ = bendingModeShapes(par) # phi_w (Nw,Ny) (but not stack)
     phi_alpha, _, _ = torsionModeShapes(par) # phi_alpha (Nalpha,Ny) (but not stack)
@@ -273,6 +401,23 @@ def _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=None):
 
     for i in range(nm):
         qi = _phase_align_column(Vq[:, i]) # qi est comme Vi quand on considère que la forme le eta(t) saute (eta coordonées modales ici)
+
+        # Normalisation énergétique des vecteurs propres (avant reconstruction des champs)
+
+        if energy_type == 'mass': # qi@M@qi = 1
+            e = np.real(np.vdot(qi, Mq @ qi))
+            if e > 0:
+                qi = qi / np.sqrt(e)
+                if i == 0:
+                    print('energy mass normalization')
+            
+        elif energy_type == 'stiffness': # qi@K@qi = 1
+            e = np.real(np.vdot(qi, Kq @ qi))
+            if e > 0:
+                qi = qi / np.sqrt(e)
+                if i == 0:
+                    print('energy stiffness normalization')
+
         qw = qi[:par.Nw]
         qa = qi[par.Nw:Nq]
 
@@ -281,6 +426,15 @@ def _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=None):
         if par.Nalpha > 0:
             alpha_modes[i, :] = np.real(qa @ Phi_alpha)  # (1, Nalpha) @ (Nalpha, Ny)
 
+
+
+        '''
+        normalize = "per_field" : on prend le max du champ w (resp. a) et on le norm pas son max pour chaque mode
+        normalize = "per_mode"  : on prend le max entre a et w pour un mode et ça nous sert de norm
+
+        je pense le mieux c'est de ne pas normaliser comme ça, mais plutôt normaliser a et w par rapport à leur propre energy cinétique,
+        comme ça on peut bien comparer a avec w pour chaque mode, et même entre les modes
+        '''
         if normalize=='per_field':
             
             if par.Nw > 0:
@@ -440,9 +594,9 @@ def getStructuralMassMatrix(par):
     phi_w, _, _ = bendingModeShapes(par)
     phi_alpha, _, _ = torsionModeShapes(par)
 
-    Mww = getMatrix(phi_w , phi_w , par.Nw , par.Nw , par.m , par.Mt , par)
-    Mwalpha = getMatrix(phi_w , phi_alpha , par.Nw , par.Nalpha , par.m*par.x_alpha , par.Mt*par.x_t , par)
-    Malphaalpha = getMatrix(phi_alpha , phi_alpha , par.Nalpha , par.Nalpha , par.I_alpha , par.I_alpha_t , par)
+    Mww = getMatrix(phi_w , phi_w , par.Nw , par.Nw , par.airfoil.m , par.Mt , par)
+    Mwalpha = getMatrix(phi_w , phi_alpha , par.Nw , par.Nalpha , par.airfoil.m*par.airfoil.x_alpha , par.Mt*par.x_t , par)
+    Malphaalpha = getMatrix(phi_alpha , phi_alpha , par.Nalpha , par.Nalpha , par.airfoil.Ialpha_EA , par.I_alpha_t , par)
 
     M = np.block([[Mww, Mwalpha], [ Mwalpha.T, Malphaalpha]])
 
@@ -557,7 +711,7 @@ def QuasiSteadyAeroModel(par,U):
     """
 
     phi_ww, phi_alphaalpha, phi_walpha = modalMatrices(par)
-    Ka = 0.5 * par.rho_air * (U**2) * par.c * np.block([[0 * phi_ww , par.dCn * phi_walpha], [0 * phi_walpha.T , - par.c * par.dCm * phi_alphaalpha]])
+    Ka = 0.5 * par.rho_air * (U**2) * par.airfoil.c * np.block([[0 * phi_ww , par.dCn * phi_walpha], [0 * phi_walpha.T , - par.airfoil.c * par.dCm * phi_alphaalpha]])
   
     return Ka 
 
@@ -638,17 +792,17 @@ def CooperWrightNotation(par,k):
     L_w_dot = par.dCn * F
     L_w = - par.dCn * k * G
 
-    L_alpha_dot_dot = - np.pi * par.a
-    L_alpha_dot = par.dCn * ( F * (1/2 - par.a) + (G/k)) + np.pi
-    L_alpha = par.dCn * (F - k * G * (1/2 - par.a) )
+    L_alpha_dot_dot = - np.pi * par.airfoil.a
+    L_alpha_dot = par.dCn * ( F * (1/2 - par.airfoil.a) + (G/k)) + np.pi
+    L_alpha = par.dCn * (F - k * G * (1/2 - par.airfoil.a) )
 
-    M_w_dot_dot = np.pi * par.a
+    M_w_dot_dot = np.pi * par.airfoil.a
     M_w_dot = 2 * par.dCm * F
     M_w = - 2 * par.dCm * k * G 
 
-    M_alpha_dot_dot = - np.pi * (1/8 + (par.a**2))
-    M_alpha_dot = 2 * par.dCm * (F * (1/2 - par.a) + (G/k)) + (-np.pi * (1/2 - par.a))
-    M_alpha =  2 * par.dCm * (F - k * G * (1/2 - par.a))
+    M_alpha_dot_dot = - np.pi * (1/8 + (par.airfoil.a**2))
+    M_alpha_dot = 2 * par.dCm * (F * (1/2 - par.airfoil.a) + (G/k)) + (-np.pi * (1/2 - par.airfoil.a))
+    M_alpha =  2 * par.dCm * (F - k * G * (1/2 - par.airfoil.a))
 
     return L_w_dot_dot, L_w_dot, L_w, L_alpha_dot_dot, L_alpha_dot, L_alpha, M_w_dot_dot, M_w_dot, M_w, M_alpha_dot_dot, M_alpha_dot, M_alpha
 
@@ -656,22 +810,25 @@ def TheodoresenAeroModel(par,U,omega):
     """
     Build the added aerodynamic mass, stiffness and damping matrices predicted by the Theodoresen model.
     """
+    if U!=0:
+        k = par.airfoil.b * omega / U
+        L_w_dot_dot, L_w_dot, L_w, L_alpha_dot_dot, L_alpha_dot, L_alpha, M_w_dot_dot, M_w_dot, M_w, M_alpha_dot_dot, M_alpha_dot, M_alpha = CooperWrightNotation(par,k)
+        phi_ww, phi_alphaalpha, phi_walpha = modalMatrices(par)
 
-    k = par.b * omega / U
-    L_w_dot_dot, L_w_dot, L_w, L_alpha_dot_dot, L_alpha_dot, L_alpha, M_w_dot_dot, M_w_dot, M_w, M_alpha_dot_dot, M_alpha_dot, M_alpha = CooperWrightNotation(par,k)
-    phi_ww, phi_alphaalpha, phi_walpha = modalMatrices(par)
-
-    Ka = par.rho_air * (U**2) * np.block([[L_w * phi_ww , L_alpha * par.b * phi_walpha], [- M_w * par.b * phi_walpha.T, - M_alpha * (par.b**2) * phi_alphaalpha]])
-    Ca = par.rho_air * U * par.b *np.block([[L_w_dot * phi_ww , L_alpha_dot * par.b * phi_walpha], [- M_w_dot * par.b * phi_walpha.T, - M_alpha_dot * (par.b**2) * phi_alphaalpha]])
-    Ma = par.rho_air * (par.b**2) * np.block([[L_w_dot_dot * phi_ww , L_alpha_dot_dot * par.b * phi_walpha], [- M_w_dot_dot * par.b * phi_walpha.T, - M_alpha_dot_dot * (par.b**2) * phi_alphaalpha]])
-
+        Ka = par.rho_air * (U**2) * np.block([[L_w * phi_ww , L_alpha * par.airfoil.b * phi_walpha], [- M_w * par.airfoil.b * phi_walpha.T, - M_alpha * (par.airfoil.b**2) * phi_alphaalpha]])
+        Ca = par.rho_air * U * par.airfoil.b *np.block([[L_w_dot * phi_ww , L_alpha_dot * par.airfoil.b * phi_walpha], [- M_w_dot * par.airfoil.b * phi_walpha.T, - M_alpha_dot * (par.airfoil.b**2) * phi_alphaalpha]])
+        Ma = par.rho_air * (par.airfoil.b**2) * np.block([[L_w_dot_dot * phi_ww , L_alpha_dot_dot * par.airfoil.b * phi_walpha], [- M_w_dot_dot * par.airfoil.b * phi_walpha.T, - M_alpha_dot_dot * (par.airfoil.b**2) * phi_alphaalpha]])
+    else:
+        Ka = np.zeros((par.Nalpha+par.Nw+par.Nv,par.Nalpha+par.Nw+par.Nv))
+        Ca = np.zeros((par.Nalpha+par.Nw+par.Nv,par.Nalpha+par.Nw+par.Nv))
+        Ma = np.zeros((par.Nalpha+par.Nw+par.Nv,par.Nalpha+par.Nw+par.Nv))
     return Ka, Ca, Ma
 
 ''' Eigenvalue problem and modal parameters extraction '''
 
 ''' At rest '''
 
-def ModalParamAtRest(par, normalize=True):
+def ModalParamAtRest(par, normalize='per_mode'):
     """
     Compute natural frequencies (at rest, no aerodynamic coupling).
 
@@ -679,6 +836,7 @@ def ModalParamAtRest(par, normalize=True):
     ---------------
     par : ModelParameters
         Wing parameters and mode counts.
+    normalize : "per_mode", or "per_field"
 
     RETURNS
     ---------------
@@ -713,7 +871,7 @@ def stateMatrixAero(par,U,omega):
 
     PARAMETERS
     ---------------
-    par : object
+    par : ModelParameters from input.py
         Wing and aerodynamic parameters, including model selection `model_aero`.
     U : float
         Freestream velocity (m/s).
@@ -747,7 +905,7 @@ def stateMatrixAero(par,U,omega):
     
     return A
 
-def ModalParamDyn(par, normalize = 'per_mode'):
+def ModalParamDyn(par, normalize = 'per_mode', tracked_idx=(1,2)):
     '''
     Compute the modal parameters of the system for a range of wind speeds.
 
@@ -768,14 +926,21 @@ def ModalParamDyn(par, normalize = 'per_mode'):
 
     U = par.U
     # Pour Theodorsen, nécessite un omega de ref pour calculer la frequence réduite pour construire A
-    freqs_struc, _ , _ , _ , _ , _ = ModalParamAtRest(par)
+    freqs_struc, *_ = ModalParamAtRest(par)
     omega_struc = 2*np.pi*freqs_struc
 
-    f = np.zeros((len(U),2))
-    damping = np.zeros((len(U),2))
-    realpart = np.zeros((len(U),2))
 
-    previous_omega = (omega_struc[1] + omega_struc[2])/2 # must be changed when we'll consider the v-DOF
+    # choose initial tracked modes indices and set references
+    # tracked_idx = (1, 2)  # we follow the B2 and T1 mode
+    tracked_idx = (0,1,2,3)  # actually we want to follow more than 2 modes
+    f = np.zeros((len(U),len(tracked_idx)))
+    damping = np.zeros((len(U),len(tracked_idx)))
+    realpart = np.zeros((len(U),len(tracked_idx)))
+
+    idx0 = [j for j in tracked_idx if j < len(omega_struc)]
+    previous_omega = float(np.mean(omega_struc[idx0])) if idx0 else float(np.mean(omega_struc))
+
+    #previous_omega = (omega_struc[1] + omega_struc[2])/2 # must be changed when we'll consider the v-DOF
     prev = []
 
     # we keep the contributions of each DDL w, alpha for each U
@@ -790,9 +955,10 @@ def ModalParamDyn(par, normalize = 'per_mode'):
         
         A = stateMatrixAero(par,U[i],previous_omega)
         '''
-        big problem here, we can't order the frequencies like that, when T1 and B2 crosses it will mess everythg
+        big problem here, we can't order the frequencies like that, when T1 and B2 crosses it will mess everythg,
+        SOLVED with mode tracking with MAC
         '''
-
+        
         eigvals, eigvecs = _eigs_sorted_positive_imag(A)
         w = np.imag(eigvals)
         f0 = w/(2*np.pi)
@@ -815,27 +981,26 @@ def ModalParamDyn(par, normalize = 'per_mode'):
         curr_vecs = [_mode_id_vec(w_modes[j, :], alpha_modes[j, :]) for j in range(par.Nq)]
 
         if i == 0:
-            # choose initial tracked indices and set references
-            tracked_idx = (1, 2)  # we follow the B2 and T1 mode
-            ''' /!\ We must check if we always have f(B2)<f(T1) at U=0 '''
-            prev_refs = [curr_vecs[tracked_idx[0]], curr_vecs[tracked_idx[1]]] # mode à U=0 deviennet notre ref pour la suite
+            # modes tracking
+            ''' /!\ We must check if we always have f(B2)<f(T1) at U=0 ??'''
+            prev_refs = [curr_vecs[j] for j in tracked_idx] # mode à U=0 deviennet notre ref pour la suite
         else:
             # assign by MAC against previous references
             tracked_idx, MAC = _assign_by_mac(prev_refs, curr_vecs)
             # update references
-            prev_refs = [curr_vecs[tracked_idx[0]], curr_vecs[tracked_idx[1]]]
+            prev_refs = [curr_vecs[j] for j in tracked_idx]
 
         # fill outputs for the tracked modes only
-        k0, k1 = tracked_idx
-        f[i, 0] = f0[k0]
-        f[i, 1] = f0[k1]
-        damping[i, 0] = zeta[k0]
-        damping[i, 1] = zeta[k1]
-        realpart[i, 0] = p[k0]
-        realpart[i, 1] = p[k1]
+        k_list = tracked_idx
+        for j, k in enumerate(k_list):
+            f[i, j] = f0[k]
+            damping[i, j] = zeta[k]
+            realpart[i, j] = p[k]
 
         # keep omega ref near the followed modes (updating the reduced frequency for Theodorsen model)
-        previous_omega = 0.5 * (w[k0] + w[k1])
+        previous_omega = float(np.mean(w[list(tracked_idx)]))
+        # JE SAIS pas si on doit faire la moyenne de tous les omega pour la freq réduite ou que des modes qui nous intéresse ?
+        # previous_omega = 0.5 * (w[k_list[1]] + w[k_list[]])
 
     return f, damping , f_modes_U, w_modes_U, alpha_modes_U
 
@@ -895,3 +1060,368 @@ def damping_crossing_slope(U, damping, return_status=False):
             slope = 0 # we put a default value if it doesn't cross and only >0
             Uc = 70
             return (Uc, slope, 'censored') if return_status else (Uc, slope)
+
+
+''' Temporal resolutions '''
+
+def integrate_state_rk(par, U, t, x0=None, omega_ref=None, return_A=True, rk_order = 2):
+    """
+    Intègre temporellement x' = A x avec A = stateMatrixAero(par, U, omega_ref)
+    en Runge-Kutta ordre 1 (Euler explicite).
+
+    Paramètres
+    ----------
+    par : ModelParameters
+        Doit être compatible avec stateMatrixAero/ModalParamAtRest.
+    U : float
+        Vitesse d'écoulement choisie (m/s).
+    t : array-like (n_t,)
+        Grille de temps croissante.
+    x0 : array-like (n_x,), optionnel
+        Etat initial. Par défaut vecteur nul.
+    omega_ref : float, optionnel
+        w de ref utilisée par Theodorsen pour frequence réduite k 
+        pour construire A. Si None, on la déduit des fréquences propres
+        au repos comme 0.5*(omega_2 + omega_3) quand disponible.
+    return_A : bool
+        Si True, retourne aussi la matrice d'état utilisée.
+
+    Retours
+    -------
+    t : ndarray (n_t,)
+    X : ndarray (n_t, n_x)
+        Evolution temporelle de l'état.
+    A : ndarray (n_x, n_x) si return_A==True
+        Matrice d'état utilisée pour l'intégration.
+
+    Remarques
+    ---------
+    - Méthode d'ordre 1 (Euler explicite). Choisir un pas de temps suffisamment petit.
+    - Pour par.model_aero == 'Theodorsen', U doit être > 0.
+    """
+
+    t = np.asarray(t, dtype=float)
+    if t.ndim != 1 or t.size < 2:
+        raise ValueError("t should be a 1D vector.")
+
+    # Dimension d'état: 2(Nw+Nalpha)
+    n_q = int(par.Nv + par.Nw + par.Nalpha)
+    n_x = 2 * n_q
+
+    # Etat initial
+    if x0 is None:
+        x = np.zeros(n_x, dtype=float)
+    else:
+        x = np.asarray(x0, dtype=float).ravel()
+        if x.size != n_x:
+            raise ValueError(f"x0 should be a vector : {n_x}, not : {x.size}.")
+
+    # Fréquence de référence (Theodorsen)
+    if par.model_aero == "Theodorsen":
+        if U < 0:
+            raise ValueError("Theodorsen needs U >= 0")
+        if omega_ref is None:
+            # on calcule une frequence de ref à partir du modèle au repos
+            freqs_struc, *_ = ModalParamAtRest(par)  # Hz
+            omega_struc = 2 * np.pi * np.asarray(freqs_struc, dtype=float)
+            if omega_struc.size >= 3:
+                omega_ref = 0.5 * (omega_struc[1] + omega_struc[2])
+            elif omega_struc.size >= 1:
+                omega_ref = float(omega_struc[-1])
+            else:
+                omega_ref = 0.0
+    else:
+        # Modèles quasi-statiques n'utilisent pas omega_ref
+        if omega_ref is None:
+            omega_ref = 0.0
+
+    # Matrice d'état (constante pendant l'intégration)
+    A = stateMatrixAero(par, U, omega_ref)
+
+    # Intégration Euler explicite
+    nt = t.size
+    X = np.zeros((nt, n_x), dtype=float)
+    X[0, :] = x
+
+    if rk_order not in (1, 2, 3, 4):
+        raise ValueError("rk_order must be in {1,2,3,4}")
+
+    for k in range(nt - 1):
+        dt = t[k + 1] - t[k]
+        if dt <= 0:
+            raise ValueError("dt must be >0")
+
+        if rk_order == 1:
+            # Euler explicite (RK1): x_{k+1} = x_k + dt * A x_k
+            k1 = A @ x
+            x = x + dt * k1
+
+        elif rk_order == 2:
+            # RK2 (midpoint)
+            k1 = A @ x
+            k2 = A @ (x + 0.5 * dt * k1)
+            x = x + dt * k2
+
+        elif rk_order == 3:
+            # RK3 (Kutta 3 classique)
+            k1 = A @ x
+            k2 = A @ (x + 0.5 * dt * k1)
+            k3 = A @ (x + dt * (-k1 + 2.0 * k2))
+            x = x + (dt / 6.0) * (k1 + 4.0 * k2 + k3)
+
+        else:  # rk_order == 4
+            # RK4 classique
+            k1 = A @ x
+            k2 = A @ (x + 0.5 * dt * k1)
+            k3 = A @ (x + 0.5 * dt * k2)
+            k4 = A @ (x + dt * k3)
+            x = x + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+        X[k + 1, :] = x
+
+    if return_A:
+        return t, X, A
+    return t, X
+
+''' Plot functions '''
+
+def plot_w_alpha_fields(par, t, X, U = None, times_to_plot=None, cmap='viridis', return_maps=False):
+    """
+    Reconstruit et trace w(y,t) et alpha(y,t) à partir de l'état X(t).
+    Suppose q = [qv (optionnel), qw (Nw), qa (Nalpha)] puis [vitesse...].
+
+    Paramètres
+    ----------
+    par : ModelParameters
+        Doit fournir y, Nw, Nalpha, (optionnellement Nv).
+    t : ndarray (nt,)
+        Temps utilisés lors de l'intégration.
+    X : ndarray (nt, 2*(Nv+Nw+Nalpha))
+        Trajectoires d'état issues de l'intégration temporelle
+    times_to_plot : list[float] ou None
+        Instants sélectionnés pour coupes w(y, t_i) et alpha(y, t_i). Si None, choisi 4 instants.
+    cmap : str
+        Colormap pour les cartes temps-envergure.
+    return_maps : bool
+        Si True, retourne aussi (w_map, alpha_map) de taille (nt, Ny).
+
+    Retours
+    -------
+    (optionnel) w_map : ndarray (nt, Ny), alpha_map : ndarray (nt, Ny)
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    t = np.asarray(t, dtype=float)
+    nt = t.size
+    if X.shape[0] != nt:
+        raise ValueError("X and t must have the same number of rows.")
+
+    # Récupère formes modales
+
+    Nw = par.Nw
+    Nalpha = par.Nalpha
+    Nv = par.Nv
+
+    # Slices des coordonnées modales dans q
+    n_q = X.shape[1] // 2
+    Q = X[:, :n_q]  # (nt, Nv+Nw+Nalpha)
+    i_w0 = Nv
+    i_w1 = Nv + Nw
+    i_a0 = i_w1
+    i_a1 = i_w1 + Nalpha
+
+    qw_t = Q[:, i_w0:i_w1]
+    qa_t = Q[:, i_a0:i_a1]
+
+    # Mapping modal -> champs
+    w_map, a_map = _modal_to_physical_fields(par, qw_t, qa_t)
+
+    # Choix des instants pour coupes
+    if times_to_plot is None:
+        # 4 instants répartis (début/extrémités incluses)
+        idx = np.linspace(0, nt - 1, 4, dtype=int)
+    else:
+        times_to_plot = np.asarray(times_to_plot, dtype=float)
+        # projection aux indices les plus proches
+        idx = np.array([np.argmin(np.abs(t - ti)) for ti in times_to_plot], dtype=int)
+
+    # Figures
+    fig, axes = plt.subplots(2, 2, figsize=(12, 6), constrained_layout=True)
+    if U>=0: # si U = None alors ça renvoie False par défaut
+        fig.suptitle(f'U = {U} m/s')
+    # Cartes temps–envergure
+    im0 = axes[0, 0].imshow(w_map, aspect='auto', origin='lower',
+                            extent=[par.y[0], par.y[-1], t[0], t[-1]], cmap=cmap)
+    axes[0, 0].set_title("w(y,t)")
+    axes[0, 0].set_xlabel("y")
+    axes[0, 0].set_ylabel("t")
+    plt.colorbar(im0, ax=axes[0, 0], label='w')
+
+    im1 = axes[1, 0].imshow(a_map, aspect='auto', origin='lower',
+                            extent=[par.y[0], par.y[-1], t[0], t[-1]], cmap=cmap)
+    axes[1, 0].set_title("alpha(y,t)")
+    axes[1, 0].set_xlabel("y")
+    axes[1, 0].set_ylabel("t")
+    plt.colorbar(im1, ax=axes[1, 0], label='alpha')
+
+    # Coupes w(y, t_i)
+    for j in idx:
+        axes[0, 1].plot(par.y, w_map[j, :], label=f"t={t[j]:.3g}")
+    axes[0, 1].set_title("Coupes w(y, t_i)")
+    axes[0, 1].set_xlabel("y")
+    axes[0, 1].set_ylabel("w")
+    axes[0, 1].legend(loc='best')
+
+    # Coupes alpha(y, t_i)
+    for j in idx:
+        axes[1, 1].plot(par.y, a_map[j, :], label=f"t={t[j]:.3g}")
+    axes[1, 1].set_title("Coupes alpha(y, t_i)")
+    axes[1, 1].set_xlabel("y")
+    axes[1, 1].set_ylabel("alpha")
+    axes[1, 1].legend(loc='best')
+
+    plt.show()
+
+    if return_maps:
+        return w_map, a_map
+    
+def plot_tip_time_and_fft(par, t, X, detrend=True, U=None, window=True, zero_pad=1, freq_max=None, return_data=False):
+    """
+    Trace w(y=s,t) et alpha(y=s,t) + leurs FFT (Hz) en disposition 2x2:
+        w(y=s,t)        |  FFT(w(y=s,t))
+        alpha(y=s,t)    |  FFT(alpha(y=s,t))
+
+    Paramètres
+    ----------
+    par : ModelParameters
+        Doit fournir y, Nw, Nalpha, (optionnellement Nv).
+    t : ndarray (nt,)
+        Temps utilisés lors de l'intégration (pas uniforme recommandé).
+    X : ndarray (nt, 2*(Nv+Nw+Nalpha))
+        Trajectoires d'état issues de l’intégration.
+    detrend : bool
+        Si True, retire la moyenne avant FFT.
+    window : bool
+        Si True, applique une fenêtre de Hann avant FFT.
+    zero_pad : int
+        Facteur de zero-padding (>=1).
+    freq_max : float ou None
+        Limite max sur l’axe des fréquences (Hz). None = Nyquist.
+    return_data : bool
+        Si True, retourne aussi (t, w_tip, alpha_tip, f_w, W_mag, f_a, A_mag).
+
+    Retours (optionnels si return_data=True)
+    ---------------------------------------
+    t : ndarray (nt,)
+    w_tip : ndarray (nt,)
+    alpha_tip : ndarray (nt,)
+    f_w : ndarray (nf,)
+    W_mag : ndarray (nf,)
+    f_a : ndarray (nf,)
+    A_mag : ndarray (nf,)
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    # Sécurité basique
+    t = np.asarray(t, dtype=float)
+    nt = t.size
+    if X.shape[0] != nt:
+        raise ValueError("X doit avoir autant de lignes que t d'éléments.")
+    if nt < 2:
+        raise ValueError("Besoin d'au moins 2 points temporels.")
+    dt = np.mean(np.diff(t))
+    if not np.allclose(np.diff(t), dt, rtol=1e-3, atol=1e-9):
+        raise ValueError("t doit être (quasi) uniformément échantillonné pour la FFT.")
+
+    # Récupération des coordonnées modales depuis X
+    Nv = int(getattr(par, 'Nv', 0))
+    Nw = int(getattr(par, 'Nw', 0))
+    Na = int(getattr(par, 'Nalpha', 0))
+    n_q = X.shape[1] // 2
+    Q = X[:, :n_q]
+
+    i_w0, i_w1 = Nv, Nv + Nw
+    i_a0, i_a1 = i_w1, i_w1 + Na
+    qw_t = Q[:, i_w0:i_w1] if Nw > 0 else np.zeros((nt, 0))
+    qa_t = Q[:, i_a0:i_a1] if Na > 0 else np.zeros((nt, 0))
+
+    # Mapping modal -> champs physiques sur l'envergure
+    w_map, a_map = _modal_to_physical_fields(par, qw_t, qa_t)  # renvoie w(y,t) alpha(y,t)
+    # puis on prend les valeurs temporelles en bout d'aile [tip_idx]
+
+
+    # Extraction au bout (y=s) = dernier point de par.y
+    tip_idx = -1
+    w_tip = w_map[:, tip_idx] if w_map.size else np.zeros(nt)
+    alpha_tip = a_map[:, tip_idx] if a_map.size else np.zeros(nt)
+
+    # Prétraitement pour FFT
+    xw = w_tip.copy()
+    xa = alpha_tip.copy()
+    if detrend:
+        xw = xw - np.mean(xw)
+        xa = xa - np.mean(xa)
+    if window:
+        win = np.hanning(nt)
+        xw = xw * win
+        xa = xa * win
+
+    # Zero-padding
+    n_fft = int(2 ** np.ceil(np.log2(nt))) * int(max(1, zero_pad))
+
+    # FFT mono-côté et axe fréquentiel (Hz)
+    W = np.fft.rfft(xw, n=n_fft)
+    A = np.fft.rfft(xa, n=n_fft)
+    f = np.fft.rfftfreq(n_fft, d=dt)
+
+    # Amplitude (échelle simple; pour amplitude single-sided, on multiplie par 2/N)
+    scale = 2.0 / nt
+    W_mag = scale * np.abs(W)
+    A_mag = scale * np.abs(A)
+
+    # Limites de fréquence
+    if freq_max is None:
+        freq_max = f[-1]
+    f_sel = f <= freq_max
+
+    # Figure 2x2
+    fig, axes = plt.subplots(2, 2, figsize=(12, 6), constrained_layout=True)
+    if U>=0: # si U = None alors ça renvoie false
+        fig.suptitle(f'U = {U} m/s')
+
+    # w(y=s, t)
+    axes[0, 0].plot(t, w_tip, color='tab:blue')
+    axes[0, 0].set_title("w(y=s, t)")
+    axes[0, 0].set_xlabel("t [s]")
+    axes[0, 0].set_ylabel("w_tip")
+    axes[0, 0].grid(True)
+
+    # FFT w
+    axes[0, 1].plot(f[f_sel], W_mag[f_sel], color='tab:blue')
+    axes[0, 1].set_title("FFT(w(y=s, t))")
+    axes[0, 1].set_xlabel("f [Hz]")
+    axes[0, 1].set_ylabel("|W(f)|")
+    axes[0, 1].set_xlim(0, 50)
+    axes[0, 1].grid(True)
+
+    # alpha(y=s, t)
+    axes[1, 0].plot(t, alpha_tip, color='tab:orange')
+    axes[1, 0].set_title("alpha(y=s, t)")
+    axes[1, 0].set_xlabel("t [s]")
+    axes[1, 0].set_ylabel("alpha_tip [rad]")
+    axes[1, 0].grid(True)
+
+    # FFT alpha
+    axes[1, 1].plot(f[f_sel], A_mag[f_sel], color='tab:orange')
+    axes[1, 1].set_title("FFT(alpha(y=s, t))")
+    axes[1, 1].set_xlabel("f [Hz]")
+    axes[1, 1].set_ylabel("|A(f)|")
+    axes[1, 1].set_xlim(0, 50)
+    axes[1, 1].grid(True)
+
+    plt.show()
+
+    if return_data:
+        return t, w_tip, alpha_tip, f[f_sel], W_mag[f_sel], f[f_sel], A_mag[f_sel]

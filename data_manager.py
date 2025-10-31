@@ -11,7 +11,7 @@ def _load_npz(npz_path: str):
     """
     if not os.path.exists(npz_path):
         raise FileNotFoundError(f"File not found: {npz_path}. Run main.py first to generate it.")
-    data = np.load(npz_path, allow_pickle=False)
+    data = np.load(npz_path, allow_pickle=True)
     params = {k[2:]: data[k] for k in data.files if k.startswith('p_')}
     return {'U': data['U'], 'f': data['f'], 'damping': data['damping'], 'params': params}
 

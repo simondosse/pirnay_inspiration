@@ -30,7 +30,7 @@ class NACA:
         # Use internal storage for x_cg to allow a property with recompute side-effects
         self._x_cg = float(x_cg)  # centroid x-position [m]
         self.x_alpha = self._x_cg-self._x_ea # J'AURAIS PU DEJA ECRIRE self.x_alpha = self.x_cg - self.x_ea car j'ai les @property plus bas 
-
+        self.a = (self._x_ea / self.b) - 1  
         # Mass properties inputs
         self._m = float(m)          # linear mass [kg/m]
 
@@ -44,11 +44,12 @@ class NACA:
         self.A = None
         self.Ix_area = None
         self.Iy_area = None
-        self.Jz_area = None
+        self.Ialpha_area_CG = None # moment polaire d'air au CG, c'est bien la somme de Ix_area+Iy_area calcilé autours des axes passant par le CG
         self.mu = None
         self.Ix_mass = None
         self.Iy_mass = None
-        self.I_alpha = None
+        self.Ialpha_CG = None # inertia moment mass around the CG axis
+        self.Ialpha_EA = None # inertia moment mass around the EA axis
         self.inertia_mass_naca0015()
 
 
@@ -79,51 +80,38 @@ class NACA:
         - If both rho and mu are given, mu takes precedence.
         """
 
-        yt = self.h
-        t = 2.0 * yt  # total thickness
+        zt = self.h
+        t = 2.0 * zt  # total thickness
 
         # Section area
         A = np.trapezoid(t, self.x)
-
+        self.A = A
         # CDG in the section plane (y_cg = 0 by symmetry)
         x_cg = self._x_cg
 
         # Area moments of inertia about the centroid
         # Iy: vertical axis (perpendicular to chord)
-        Iy_area = np.trapezoid(t * (self.x - x_cg) ** 2, self.x)
+        self.Iy_area = np.trapezoid(t * (self.x - x_cg) ** 2, self.x)
 
         # Ix: horizontal axis (parallel to chord)
         # For a vertical strip of height t, local inertia = t^3/12
-        Ix_area = (2.0 / 3.0) * np.trapezoid(yt ** 3, self.x)
+        self.Ix_area = (2.0 / 3.0) * np.trapezoid(zt ** 3, self.x)
 
         # Polar moment
-        Jalpha_area = Ix_area + Iy_area
+        self.Ialpha_area_CG = self.Ix_area + self.Iy_area
 
         mu_val = float(self._m)
         # Mass (dynamic) moments per unit span
-        Ix_mass = mu_val * (Ix_area / A)
-        Iy_mass = mu_val * (Iy_area / A)
-        I_alpha = Ix_mass + Iy_mass
+        self.Ix_mass = mu_val * (self.Ix_area / A)
+        self.Iy_mass = mu_val * (self.Iy_area / A)
+        self.Ialpha_CG = self.Ix_mass + self.Iy_mass
+        self.Ialpha_EA = self.Ialpha_CG + self.m*(self.x_alpha**2)
 
         # Out-of-plane centroid (mid-span for a solid extrusion)
 
 
 
-        # Expose results as attributes of the NACA instance
-        # 2D geometry (airfoil section)
-        self.A = A                        # cross-sectional area [m^2]
-        self._x_cg = x_cg                 # x-coordinate of the centroid [m]
-        # 2D area moments of inertia (about the centroid)
-        self.Ix_area = Ix_area            # [m^4]
-        self.Iy_area = Iy_area            # [m^4]
-        self.Jalpha_area = Jalpha_area            # [m^4]
-        # Linear mass properties
-        self.mu = mu_val                  # linear mass [kg/m]
-        # 2D mass (dynamic) moments of inertia per unit span
-        self.Ix_mass = Ix_mass            # [kg·m]
-        self.Iy_mass = Iy_mass            # [kg·m]
-        self.I_alpha = I_alpha            # [kg·m]
-        # Out-of-plane info
+
 
         # no need to return self right ?? just NACA.intertia_mass_naca0015() might be enough
         # return self
@@ -138,6 +126,8 @@ class NACA:
 
     Un @setter va toujour de paire avec un @property
     '''
+
+    #________________________________________________________________________________#
     @property #permet d'accéder à une méthode comme si c'était un attribut, 
     def x_cg(self):
         return self._x_cg
@@ -151,6 +141,17 @@ class NACA:
         self.inertia_mass_naca0015() # COULD BE too much just for the x_cg update
 
     @property
+    def x_ea(self):
+        return self._x_ea
+
+    @x_ea.setter
+    def x_ea(self, value: float) -> None:
+        # Update CG and recompute inertias that depend on it
+        self._x_ea = float(value)
+        self.x_alpha = self._x_cg-self._x_ea
+        self.inertia_mass_naca0015()
+
+    @property
     def m(self) -> Optional[float]:
         # Linear mass (alias for mu input)
         return self._m
@@ -161,9 +162,11 @@ class NACA:
         self._m = float(value)
 
         self.inertia_mass_naca0015()
+    #________________________________________________________________________________#
+    
 
     #--------------- PLOT FUNCTION
-    def plot_naca00xx_section_with_cg(
+    def plot_naca00xx_section(
         self,
         ax=None,
         show: bool = True,
@@ -175,15 +178,6 @@ class NACA:
 
         Parameters
         ----------
-        c : float
-            Chord length [m].
-        t_c : float, optional
-            Thickness-to-chord ratio (e.g. 0.15 for NACA0015).
-        N : int, optional
-            Number of x-samples along the chord (resolution).
-        xcg : float, optional
-            x-position of the CG from the leading edge [m]. If None, compute
-            the geometric centroid of the 2D airfoil area (y_cg = 0 by symmetry).
         ax : matplotlib.axes.Axes, optional
             Axes to draw on. If None, creates a new figure and axes.
         show : bool, optional
@@ -199,21 +193,21 @@ class NACA:
         """
         import matplotlib.pyplot as plt
 
-        if c <= 0:
+        if self.c <= 0:
             raise ValueError("Chord length c must be > 0.")
-        if N < 10:
+        if self.N < 10:
             raise ValueError("N is too small; use N >= 100 for a reasonable plot.")
 
         # x along the chord from LE (0) to TE (c)
         x = self.x
 
         # Symmetric NACA 00xx half-thickness distribution
-        yt = self.h
+        zt = self.h
         t_c = self.t_c
 
         # Upper and lower surfaces (no camber for 00xx)
-        yu = +yt
-        yl = -yt
+        zu = +zt
+        zl = -zt
         
         x_cg = self._x_cg # en vrai peut être qu'ici le self.x_cg marche car dcp ça fait appelle au getter (@property)
         x_ea = self._x_ea
@@ -225,29 +219,29 @@ class NACA:
             fig = ax.figure
 
         # Plot upper and lower surfaces
-        ax.plot(x, yu, color='k', lw=1.2)
-        ax.plot(x, yl, color='k', lw=1.2)
+        ax.plot(x, zu, color='k', lw=1.2)
+        ax.plot(x, zl, color='k', lw=1.2)
 
         # Optional fill for the airfoil shape
         if fill:
-            ax.fill_between(x, yl, yu, color='0.85', alpha=0.9, linewidth=0)
+            ax.fill_between(x, zl, zu, color='0.85', alpha=0.9, linewidth=0)
 
         # Mark the CG on the chord axis (y=0 by symmetry)
-        ax.plot([x_cg], [0.0], 'ro', ms=6, label='CG')
+        ax.plot([x_cg], [0.0], 'go', ms=6, label='CG')
         if annotate:
             ax.annotate('CG', (x_cg, 0.0), xytext=(6, 8),
                         textcoords='offset points', color='g')
             
         ax.plot([x_ea], [0.0], 'ro', ms=6, label='EA')
         if annotate:
-            ax.annotate('CG', (x_ea, 0.0), xytext=(6, 8),
+            ax.annotate('EA', (x_ea, 0.0), xytext=(6, 8),
                         textcoords='offset points', color='r')
 
         # Formatting
         tc_percent = int(round(t_c * 100))
-        ax.set_title(f'NACA00{tc_percent:02d} section (c = {c:g} m)')
+        ax.set_title(f'NACA00{tc_percent:02d} section (c = {self.c:g} m)')
         ax.set_xlabel('x [m] (from Leading Edge)')
-        ax.set_ylabel('y [m]')
+        ax.set_ylabel('z [m]')
         ax.set_aspect('equal', adjustable='box')
         ax.grid(True, linewidth=0.3, alpha=0.5)
         # ax.legend(frameon=False, loc='best')
@@ -259,12 +253,20 @@ class NACA:
 
 # --- Example usage ---
 if __name__ == "__main__":
-    # Example: chord = 0.3 m, aluminum (rho = 2700 kg/m^3), 1 m span
-    c = 0.20
-    t_c=0.15
-    m = 2.4
-    x_ea=0.3*c
-    x_cg=0.6*c
-    testNACA = NACA(c=c, t_c=0.15,m=m,x_ea=x_ea,x_cg=x_cg)  # t_c stored as attribute
+    #   	 u            v           EIx           GJ
+    X_opt = [ 0.30252596, 0.83633956, 249.05822664, 49.63251818]
+    #        x_ea         x_cg        EIx           GJ
+    X_phys= [ 0.0605    , 0.167     , 249.05822664, 49.63251818]
+
+    airfoil = NACA(x_ea=X_phys[0],x_cg=X_phys[1],m=2.4,c=0.2)
+    airfoil.plot_naca00xx_section()
+
+    airfoil.x_ea = 0.05
+    print(f'1. Ialpha_EA = {airfoil.Ialpha_EA}')
+    print(f'1. x_alpha = {airfoil.x_alpha}')
+    airfoil.x_ea = 0.1
+    print(f'2. Ialpha_EA = {airfoil.Ialpha_EA}')
+    print(f'2. x_alpha = {airfoil.x_alpha}')
+
 
 # %%

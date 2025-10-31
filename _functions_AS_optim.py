@@ -23,7 +23,7 @@ def map_to_physical(X_uv):
      ase disjunctions because sometimes we want to go from a whole pop settings to the physical base,
     and sometimes just for one individual (1 set of parameters)
     '''
-    if len(X_uv.shape) !=1: # if we have more than one dimension for the array (4,) or (100,4)
+    if len(X_uv.shape) !=1: # if we have more than one dimension for the array (4,) or (100,4), so it depends on if we are doing AS or OPTIM
         u     = X_uv[:, 0]
         v     = X_uv[:, 1]
         EIx   = X_uv[:, 2]

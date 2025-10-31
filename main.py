@@ -7,6 +7,8 @@ from input import ModelParameters
 import ROM
 import plotter
 import NACA
+from _functions_AS_optim import *
+
 from data_manager import save_modal_data, _load_npz
 from scipy.linalg import eigh
 
@@ -30,9 +32,6 @@ x_ea = c/3 # elastic axis location from leading edge
 x_cg = 0.379*c # center of gravity location from leading edge
 m = 2.4 # mass per unit span
 
-res = NACA.inertia_mass_naca0015(c=c, mu=m, N=4000, span=s, xcg_known=x_cg)
-# I_alpha = 5.6e-3 # mass moment of inertia per unit span
-I_alpha=res.Jz_mass+m*abs(x_cg-x_ea)**2 # parallel axis theorem to get torsional inertia about elastic axis
 EIx = 366 # bending stiffness
 GJ = 78 # torsional stiffness
 eta_w = 0.005 # structural damping ratio in bending
@@ -55,21 +54,27 @@ else:
 ''' Set, run and save models '''
 
 #Theodorsen model
-model_theod = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, 'Theodorsen')
+model_theod = ModelParameters(s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, model_aero='Theodorsen')
 f, damping, _ = ROM.ModalParamDyn(model_theod)
 
-
-model_struc = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t)
+model_struc = ModelParameters(s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t)
 eig_strucS2 = ROM.ModalParamAtRest(model_struc)
 model_struc.update(s=1.5)
 eig_strucS15 = ROM.ModalParamAtRest(model_struc)
 
+
+
+
 #%%___________________________________TEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEST
-s=1.5
-model = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t,'Theodorsen')
+
+model = ModelParameters(s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t,'Theodorsen')
 f, damping, _ , _ , _ = ROM.ModalParamDyn(model)
 save_modal_data(f = f, damping = damping, model_params=model,out_dir='data', filename='model_test.npz')
 plotter.plot_modal_data_single(npz_path='data/model_test.npz')
+
+
+
+
 
 #%%________________________________________
 # #QuasiSteady model
@@ -114,7 +119,7 @@ NACA.plot_naca00xx_section_with_cg(t_c=0.15, c=c, N=4000, xcg=x_cg, fill=True, a
 
 # Modèle structurel seul (sans aéro)
 s=2
-model_struc = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t)
+model_struc = ModelParameters(s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha)
 f0, zeta0, eig0, V0, w_modes, alpha_modes = ROM.ModalParamAtRest(model_struc, normalize='per_mode') # normalize = 'per_field' or 'per_mode'
 plotter.plot_mode_shapes_grid(y=model_struc.y, freqs_hz=f0, W=w_modes, ALPHA=alpha_modes, normalize=False, suptitle='Structural mode shape contribution')
 
@@ -127,7 +132,7 @@ plotter.plot_mode_shapes_grid(y=model_struc.y, freqs_hz=f0, W=w_modes, ALPHA=alp
 s=1.5
 
 
-model_struc = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t,'Theodorsen')
+model_struc = ModelParameters(s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha,model_aero='Theodorsen')
 # model_struc.Umax = 100                          # Maximum velocity of the IAT wind tunnel
 # model_struc.steps = 200                        # Number of velocity steps
 # model_struc.U = np.linspace(0.1, model_struc.Umax, model_struc.steps)
@@ -137,14 +142,91 @@ f, damping , f_modes_U , w_modes_U, a_modes_U = ROM.ModalParamDyn(model_struc,no
 save_modal_data(f = f, damping = damping, model_params=model_struc,out_dir='data', filename='model_test.npz')
 plotter.plot_modal_data_single(npz_path='data/model_test.npz')
 
+
+
 # mode shape contributions plot
 plotter.plot_mode_shapes_over_U_grid(y=model_struc.y,U=model_struc.U,
                                     WU=w_modes_U, # shape (nU, n_modes, Ny), déjà normalisé si souhaité
                                     ALPHAU=a_modes_U, # idem
                                     f_modes_U=f_modes_U,
-                                    mode_indices=[2,3], # modes #2 et #3 (1- ou 0-based accepté)
+                                    mode_indices=[0,1,2,3,4], # modes #2 et #3 (1- ou 0-based accepté)
                                     n_samples=10,
                                     sharey=True, 
                                     suptitle='Aeroelastic mode shapes across U')
+
+
+
+
+#%%___________________________________________RESOLUTION TEMPORELLE____________________________________
+
+algo_name = 'DE'
+data = np.load(f'data/res_{algo_name}.npz')
+X_opt = map_to_physical(data['resX'])
+x_ea = X_opt[0]*c
+# x_ea = 0.075
+x_cg = X_opt[1]*c
+# x_cg = 0.075
+EIx = X_opt[2]
+GJ = X_opt[3]
+model_opt = ModelParameters(s=s, c=c, x_ea=x_ea, x_cg=x_cg, m=m, EIx=EIx, GJ=GJ, eta_w=eta_w, eta_alpha=eta_alpha,model_aero='Theodorsen')
+model_opt.Umax = 25
+model_opt.Nw=3
+model_opt.airfoil.plot_naca00xx_section()
+
+f0, zeta0, eig0, V0, w_modes, alpha_modes = ROM.ModalParamAtRest(model_opt, normalize='pfer_mode') # normalize = 'per_field' or 'per_mode'
+plotter.plot_mode_shapes_grid(y=model_opt.y, freqs_hz=f0, W=w_modes, ALPHA=alpha_modes, sharey=True, suptitle='Structural mode shape contribution - U=0')
+
+f, damping, f_modes_U, w_modes_U, alpha_modes_U = ROM.ModalParamDyn(model_opt,tracked_idx=(0,1,2,3))
+save_modal_data(f = f, damping = damping, model_params=model_opt,out_dir='data', filename='model_optim.npz')
+plotter.plot_modal_data_single(npz_path='data/model_optim.npz' )
+
+# %matplotlib widget
+t0 = 0
+tf = 10
+dt = 0.001
+t = np.arange(t0, tf+dt, dt)
+
+X0 = ROM.build_state_q_from_real(
+    par=model_opt,
+    w_tip=0.01,        # m
+    alpha_tip=0.01,     # rad
+    wdot_tip=0.0,
+    alphadot_tip=0.0
+) # même si on veut simuler une réponse temporelle avec un U!=0 faut mettre un petit w0 ou aplha0 sinon tous les efforts symétriques s'annulent
+
+'''
+thanks to range kutta we get the temporal solutions of a initial state X0 and a freestream speed U
+then we plot w(y,t) alpha(y,t)
+then we plot w(y=s,t) alpha(y=s,t) + FFT
+'''
+
+U=0
+t,X,A = ROM.integrate_state_rk(par = model_opt, U = U , t=t, x0 = X0, rk_order=4)
+
+ROM.plot_w_alpha_fields(par = model_opt, t=t, X=X,U=U,times_to_plot = np.linspace(t[0],t[-1],10))
+ROM.plot_tip_time_and_fft(par = model_opt, t=t,X=X, U=U, detrend=True)
+
+plotter.plot_mode_shapes_over_U_grid(y=model_opt.y,U=model_opt.U,
+                                    WU=w_modes_U, # shape (nU, n_modes, Ny), déjà normalisé si souhaité
+                                    ALPHAU=alpha_modes_U, # idem
+                                    f_modes_U=f_modes_U,
+                                    mode_indices=[0,1,2,3,4,5], # modes #2 et #3 (1- ou 0-based accepté)
+                                    n_samples=10,
+                                    sharey=True, 
+                                    suptitle='Aeroelastic mode shapes across U')
+
+
+
+
+
+#%%_______________________________________Optimal section_______________________________________________
+
+
+
+
+
+
+
+
 
 # %%

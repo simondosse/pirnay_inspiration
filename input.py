@@ -1,11 +1,12 @@
 import numpy as np
-import NACA
+from NACA import NACA
+
 class ModelParameters:
     """
     Define the parameters of the model.
     """
 
-    def __init__(self,s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, model_aero = 'Theodorsen'):
+    def __init__(self,s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha, Mt=None, I_alpha_t=None, x_t=None, model_aero = 'Theodorsen'):
         ''' 
         Initialize the model parameters.
 
@@ -42,18 +43,12 @@ class ModelParameters:
         '''
 
         # Geometric parameters
-        self.s = s                              # Half-span 
-        self.c = c                              # Chord 
-        self.b = c / 2                          # Semi-chord
-        self.NACA = NACA(c=c,t_c=0.15,m=m,x_ea=x_ea,x_cg=x_cg)
+        self._s = s                              # Half-span 
 
-        self.x_ea = x_ea                        # Elastic axis location
-        self.x_cg = x_cg                        # Inertial axis location
-        self.x_alpha = x_cg - x_ea              # Distance between ea and cg
-        self.a = (self.x_ea / self.b) - 1       # Non-dimensional ea location
+        self.airfoil = NACA(c=c,t_c=0.15,m=m,x_ea=x_ea,x_cg=x_cg)
+             # Non-dimensional ea location
 
         # Structural parameters
-        self.m = m                              # Mass per unit length
         self.EIx = EIx                          # Bending stiffness 
         self.GJ = GJ                            # Torsional stiffness
         self.eta_w = eta_w                      # Bending damping ratio
@@ -74,68 +69,163 @@ class ModelParameters:
 
     
         # Discretization parameters
-        self.dy = 1/1000                        # Spatial discretization step
-        self.y = np.arange(0, s, self.dy)       # Spatial discretization vector
+        self._dy = 1/1000                        # Spatial discretization step
+        self.y = np.arange(0, s, self._dy)       # Spatial discretization vector
+        self.Nv = 0
         self.Nw = 3                             # Number of bending modes
         self.Nalpha = 3                         # Number of torsional modes
-        self.Nq = self.Nw+self.Nalpha
+        self.Nq = self.Nw+self.Nalpha+self.Nv
         self.nDOF = 2
 
         # Aerodynamic parameters
         self.rho_air = 1.204                    # Air density
 
-        # the following coeffs should depend on the NACA profile
+        '''
+        the slope of aero coeff should be attribut of NACA ? actually nop if it's 3D coeff
+        '''
         self.dCn = 4                          # Normal force coefficient, normalement c'est 2pi pour une aile infinie, pour une aile finie on la correction a0 / (1 + a0/(π e AR))
         self.dCm = 0.5                         # Moment coefficient
         # actually the dCm shoudn't be constant, in the stall region the curve is not linear anymore
-        self.Umax = 40                          # Maximum velocity of the IAT wind tunnel
-        self.steps = 80                        # Number of velocity steps
-        self.U = np.linspace(0.1, self.Umax, self.steps)
+
+        self._Umax = 40                          # Maximum velocity of the IAT wind tunnel
+        self._steps = 80                        # Number of velocity steps
+        self.U = np.linspace(0.1, self._Umax, self._steps)
 
         if model_aero not in ['Theodorsen', 'QuasiSteady']:
             raise ValueError("model_aero must be either 'Theodorsen' or 'QuasiSteady'")
         
-        self.model_aero = model_aero            # Aerodynamic model to use
+        self._model_aero = model_aero            # Aerodynamic model to use
 
 
 
-def update(self, **kwargs):
-    changed = set()
-    for key, value in kwargs.items():
-        if hasattr(self, key):
-            setattr(self, key, value)
-            changed.add(key)
-        else:
-            raise AttributeError(f"Parameter has no attribute '{key}'")
+    '''Helpers internes____________________________________________________________________________________________'''
+    def _recompute_y(self):
+        if hasattr(self, "_s") and hasattr(self, "_dy"):
+            self.y = np.arange(0, self._s, self._dy)
 
-    # Géométrie
-    if 'c' in changed:
-        self.b = self.c / 2
-    if ('x_ea' in changed) or ('x_cg' in changed) or ('c' in changed):
-        self.x_alpha = self.x_cg - self.x_ea
-        self.a = (self.x_ea / self.b) - 1
+    def _recompute_Nq(self):
+        # Cohérent avec le code ROM qui utilise Nq = Nw + Nalpha
+        if hasattr(self, "_Nw") and hasattr(self, "_Nalpha"):
+            self.Nq = int(self._Nw) + int(self._Nalpha)
 
-    # Discrétisation
-    if ('s' in changed) or ('dy' in changed):
-        self.y = np.arange(0, self.s, self.dy)
+    def _recompute_U(self):
+        if hasattr(self, "_Umax") and hasattr(self, "_steps"):
+            self.U = np.linspace(0.1, float(self._Umax), int(self._steps))
 
-    # Modes
-    if ('Nw' in changed) or ('Nalpha' in changed):
-        self.Nq = self.Nw + self.Nalpha
-
-    # Aérodynamique
-    if 'model_aero' in changed:
-        if self.model_aero not in ['Theodorsen', 'QuasiSteady']:
-            raise ValueError("model_aero must be either 'Theodorsen' or 'QuasiSteady'")
-
-    # Vitesse tunnel
-    if ('Umax' in changed) or ('steps' in changed):
-        self.U = np.linspace(0.1, self.Umax, self.steps)
-
-    # Masse en bout d’aile
-    if ('Mt' in changed) or ('I_alpha_t' in changed) or ('x_t' in changed):
-        self.has_tip = (self.Mt is not None) and bool(self.Mt)
+    def _refresh_tip_state(self):
+        # has_tip déterminé uniquement par Mt (non None et non nul)
+        self.has_tip = (self._Mt is not None) and bool(self._Mt)
         if not self.has_tip:
-            self.Mt = 0
-            self.I_alpha_t = 0
-            self.x_t = 0
+            self._Mt = 0
+            self._I_alpha_t = 0
+            self._x_t = 0
+        # recopie vers attributs "publics" pour compatibilité
+        self.Mt = self._Mt
+        self.I_alpha_t = self._I_alpha_t
+        self.x_t = self._x_t
+
+    '''@PROPERTY and @SETTER____________________________________________________________________________________________'''
+    # --- s ---
+    @property
+    def s(self) -> float:
+        return self._s
+
+    @s.setter
+    def s(self, value: float) -> None:
+        self._s = float(value)
+        self._recompute_y()
+
+    # --- dy ---
+    @property
+    def dy(self) -> float:
+        return self._dy
+
+    @dy.setter
+    def dy(self, value: float) -> None:
+        self._dy = float(value)
+        self._recompute_y()
+
+    # --- Nw ---
+    @property
+    def Nw(self) -> int:
+        return self._Nw
+
+    @Nw.setter
+    def Nw(self, value: int) -> None:
+        self._Nw = int(value)
+        self._recompute_Nq()
+
+    # --- Nalpha ---
+    @property
+    def Nalpha(self) -> int:
+        return self._Nalpha
+
+    @Nalpha.setter
+    def Nalpha(self, value: int) -> None:
+        self._Nalpha = int(value)
+        self._recompute_Nq()
+
+    # --- model_aero ---
+    @property
+    def model_aero(self) -> str:
+        return self._model_aero
+
+    @model_aero.setter
+    def model_aero(self, value: str) -> None:
+        if value not in ['Theodorsen', 'QuasiSteady']:
+            raise ValueError("model_aero must be either 'Theodorsen' or 'QuasiSteady'")
+        self._model_aero = value
+
+    # --- Umax ---
+    @property
+    def Umax(self) -> float:
+        return self._Umax
+
+    @Umax.setter
+    def Umax(self, value: float) -> None:
+        self._Umax = float(value)
+        self._recompute_U()
+
+    # --- steps ---
+    @property
+    def steps(self) -> int:
+        return self._steps
+
+    @steps.setter
+    def steps(self, value: int) -> None:
+        self._steps = int(value)
+        self._recompute_U()
+
+
+    '''
+    # --- Mt ---
+    @property
+    def Mt(self):
+        return self._Mt
+
+    @Mt.setter
+    def Mt(self, value) -> None:
+        self._Mt = value if value is not None else None
+        self._refresh_tip_state()
+
+    # --- I_alpha_t ---
+    @property
+    def I_alpha_t(self):
+        return self._I_alpha_t
+
+    @I_alpha_t.setter
+    def I_alpha_t(self, value) -> None:
+        self._I_alpha_t = value if value is not None else 0
+        self._refresh_tip_state()
+
+    # --- x_t ---
+    @property
+    def x_t(self):
+        return self._x_t
+
+    @x_t.setter
+    def x_t(self, value) -> None:
+        self._x_t = value if value is not None else 0
+        self._refresh_tip_state()
+        '''
+

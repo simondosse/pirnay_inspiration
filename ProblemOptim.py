@@ -21,7 +21,8 @@ s, c = 2.0, 0.2
 m = 2.4
 eta_w = 0.005
 eta_alpha = 0.005
-
+# we define a model with default random parameters for the X[i], those will be updated during the evaluation F(X)
+model = ModelParameters(s, c, x_ea=0.05, x_cg=0.13, m=m, EIx=400, GJ=70, eta_w=eta_w, eta_alpha=eta_alpha, model_aero='Theodorsen')
 def constraints(X):
     # Retourner un tableau g(x) <= 0 (inégalités)
     # Pour égalité h(x)=0: return [abs(h(x)) - 1e-6, ...]
@@ -30,14 +31,11 @@ def constraints(X):
     ])
 
 def cost(X):
-    x_ea = X[0]*c
-    x_cg = X[1]*c
-    res = NACA.inertia_mass_naca0015(c=c, mu=m, N=4000, span=s, xcg_known=x_cg)
-    I_alpha=res.Jz_mass+m*abs(x_cg-x_ea)**2 # parallel axis theorem to get torsional inertia about elastic axis
-    EIx = X[2]
-    GJ = X[3]
+    model.airfoil.x_ea = X[0]*c # *c because we are dealing with adimensionnal parameter
+    model.airfoil.x_cg = X[1]*c # peut faire en sorte que quand on appelle model.x_cg ça appelle en fait model.airfoil.x_cg ? moue c'est mieux de laisser comme ça : on comprend + ce que l'on fait
+    model.EIx = X[2]
+    model.GJ = X[3]
 
-    model = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, None, None, None, 'Theodorsen')
     _, damping, *_ = ROM.ModalParamDyn(model)
     Uc, _ = ROM.damping_crossing_slope(U = model.U, damping = damping[:,0])
     return Uc

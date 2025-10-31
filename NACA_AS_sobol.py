@@ -35,10 +35,17 @@ problem_uv = {
     'bounds': para_interval # Plages
 }
 
-np.random.seed(1) # we fix random to be able to repeat same results
-N = 16  # base sample size
+np.random.seed(3) # we fix random to be able to repeat same results
+N = 32  # base sample size
 X_uv = saltelli.sample(problem_uv, N, calc_second_order=False) # calc_second_order=False divides /2 the number of evaluations
 X = map_to_physical(X_uv)
+
+# default model to be updated
+s, c = 2.0, 0.2
+m = 2.4
+eta_w = 0.005
+eta_alpha = 0.005
+model = ModelParameters(s, c, x_ea=0.05, x_cg=0.10, m=m, EIx=400, GJ=70, eta_w=eta_w, eta_alpha=eta_alpha, model_aero='Theodorsen')
 
 
 
@@ -47,38 +54,27 @@ X = map_to_physical(X_uv)
 
 #%% F(X)_________________________________________________________________________________________________________
 
-s, c = 2.0, 0.2
-m = 2.4
-eta_w = 0.005
-eta_alpha = 0.005
-
 nb_obj = 2
 F = np.zeros((len(X),nb_obj))
 case_status = np.empty(len(X), dtype=object) # on dit que c'est un np qui peut contenir n'importe quoi, il contiendra des str
 
+print('Evaluation of F(X) :') 
+for i in range(len(X)):        
+    model.airfoil.x_ea = X[i][0]*c # *c because we are dealing with adimensionnal parameter
+    model.airfoil.x_cg = X[i][1]*c # peut faire en sorte que quand on appelle model.x_cg ça appelle en fait model.airfoil.x_cg ? moue c'est mieux de laisser comme ça : on comprend + ce que l'on fait
+    model.EIx = X[i][2]
+    model.GJ = X[i][3]
 
-for i in range(len(X)):
-    if i == 0:
-        print('Evaluation of F(X) :') 
-    x_ea = X[i][0]*c # *c because we are dealing with adimensionnal parameter
-    x_cg = X[i][1]*c
-    res = NACA.inertia_mass_naca0015(c=c, mu=m, N=4000, span=s, xcg_known=x_cg)
-    I_alpha=res.Jz_mass+m*abs(x_cg-x_ea)**2 # parallel axis theorem to get torsional inertia about elastic axis
-    EIx = X[i][2]
-    GJ = X[i][3]
-
-    model = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, None, None, None, 'Theodorsen')
     f, damping, *_ = ROM.ModalParamDyn(model)
-    Uc,slope_retained = ROM.damping_crossing_slope(U = model.U, damping = damping[:,0])
+    Uc,slope_retained,case = ROM.damping_crossing_slope(U = model.U, damping = damping[:,0], return_status=True)
 
     F[i][0]=Uc
     F[i][1]=slope_retained
     case_status[i]=case
     print(f'F[{i+1}] / F[{len(X)}]')
 
-
 F_status = np.hstack((F, case_status.reshape(-1, 1)))
-np.savez('data/F_sobol', X_uv=X_uv, X_phys=X, F=F)
+np.savez('data/F_sobol', X_uv=X_uv, X_phys=X, F=F, F_full = F_status)
 
 
 
@@ -128,6 +124,8 @@ def barplot_indices(df, title):
 
 # Si = sobol.analyze(problem_uv, F, calc_second_order=False, print_to_console=False)
 # les indices de Sobol sont calculés objectif par objectif ?
+data = np.load('data/F_sobol.npz')
+F = data['F']
 Si_Uc    = sobol.analyze(problem_uv, F[:, 0], calc_second_order=False, print_to_console=False)
 Si_slope = sobol.analyze(problem_uv, F[:, 1], calc_second_order=False, print_to_console=False)
 '''

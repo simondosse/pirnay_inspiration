@@ -42,11 +42,11 @@ problem_optim_NACA  = ProblemOptim(n_var = para_interval.shape[0], n_obj = n_obj
 )
 
 algorithm_GA = GA(
-        pop_size=100,
+        pop_size=20,
         sampling=LHS(),
         eliminate_duplicates=True,
         crossover=SBX(prob=0.9, eta=20),
-        mutation=PolynomialMutation(prob=None, eta=20)
+        mutation=PolynomialMutation(prob=1/para_interval.shape[0], eta=20)
         ) 
 
 algorithm_NSGAII=NSGA2( # NSGA hérite de GeneticALgorithm qui hérite de Algorithm
@@ -85,12 +85,26 @@ algorithm_DE = DE(
     jitter=False # pour perturber F, sur False si dither déjà activé
 )
 
+'''CMA-ES tire des individus depuis une loi normale multivariée N(m, sigma²C) dont sigma est la taille de pas globale et C la matrice de covariance'''
 algorithm_CMAES = CMAES(
-    x0 = np.random.random(problem_optim_NACA.n_var),
-    sigma = 0.3
-)
+    x0 = np.random.random(problem_optim_NACA.n_var),  # point initial
+    sigma = 0.3,  # écart-type initial (taille des pas)
+    population_size = None,  # si None, valeur par défaut selon n_var
+    sampling = LHS(),  # initialisation de la population
+    restarts = 0,  # nombre de redémarrages (utile pour éviter minima locaux)
+    restart_from_best = True,  # conserve le meilleur individu au redémarrage
+    # tolfun = 1e-6,  # tolérance sur la variation de la fonction objectif
+    # tolfunhist = 1e-12,  # tolérance sur l’historique des valeurs f(x)
+    # tolx = 1e-12,  # tolérance sur la variation des positions
+) #sigma et restarts sont spécifiques à CMAES
 
 
+
+
+
+#%%______MINIZATION______________________________________________________________________________
+
+'''
 termination = DefaultSingleObjectiveTermination(
     xtol=1e-6,      # tolérance sur les variables
     ftol=1e-6,      # tolérance sur la valeur du meilleur F de la génération, d'une gen à la suivant si ça a pas changé de plus de tol sur n_last gen alors ça stop
@@ -98,10 +112,21 @@ termination = DefaultSingleObjectiveTermination(
     n_max_gen=20,  # borne max
     # n_max_evals=1e5
 )
+'''
+
+algorithms = {
+    "GA": algorithm_GA,
+    "DE": algorithm_DE,
+    "CMAES": algorithm_CMAES
+}
+
+algorithm_name = "GA"  
+algorithm = algorithms[algorithm_name]
+
 
 res = minimize(
                 problem_optim_NACA, # herite forcement de la classe Problem et doit présenter une fonction _evaluate() bien définie
-                algorithm_DE,       #objet algo optim, il définit le type d'algo d'optim utilisé
+                algorithm,       #objet algo optim, il définit le type d'algo d'optim utilisé
                 ('n_gen', 20),       # terminaison : critère d'arrêt pour l'algo, ici on fait n génération et on s'arrête
                 verbose=True,       # pour afficher ou non les info du processus d'optim, utile pour debug
                 seed=2              # permet de reproduire les résultats en fixant la séquence aléatoire
@@ -114,29 +139,40 @@ res.CV : violation des contraintes (0 normalement)
 res.exec_time : temps de calcul 
 '''
 
-algo_used = 'DE'
-np.savez('data/res_'+algo_used,resX=res.X, resF = res.F)
-#%%
-data = np.load('data/res_'+algo_used+'.npz')
+np.savez('data/res_'+algorithm_name,resX=res.X, resF = res.F)
+
+
+
+
+
+#%%_____test optimal solution_______________________________________________________________________
+algorithm_name = "DE"
+data = np.load('data/res_'+algorithm_name+'.npz')
 X_opt = map_to_physical(data['resX'])
 s, c = 2.0, 0.2
 m = 2.4
 eta_w = 0.005
 eta_alpha = 0.005
-X_opt = res.X
-x_ea = X_opt[0]*c
-x_cg = X_opt[1]*c
-hop = NACA.inertia_mass_naca0015(c=c, mu=m, N=4000, span=s, xcg_known=x_cg)
-I_alpha=hop.Jz_mass+m*abs(x_cg-x_ea)**2 # parallel axis theorem to get torsional inertia about elastic axis
-EIx = X_opt[2]
-GJ = X_opt[3]
-
-model = ModelParameters(s, c, x_ea, x_cg, m, I_alpha, EIx, GJ, eta_w, eta_alpha, None, None, None, 'Theodorsen')
-model.Umax
+XX = [X_opt[0]*c,X_opt[1]*c,X_opt[2],X_opt[3]]
+model = ModelParameters(s, c, x_ea=X_opt[0]*c, x_cg=X_opt[1]*c, m=m, EIx=X_opt[2], GJ=X_opt[3], eta_w=eta_w, eta_alpha=eta_alpha,model_aero= 'Theodorsen')
+model.Umax=22
+model.steps=80
 f, damping, *_ = ROM.ModalParamDyn(model)
-save_modal_data(f = f, damping = damping, model_params=model,out_dir='data', filename='model_optim.npz')
-plotter.plot_modal_data_single(npz_path='data/model_optim.npz' )
+save_modal_data(f = f, damping = damping, model_params=model,out_dir='data', filename=f'model_optim_{algorithm_name}.npz')
+plotter.plot_modal_data_single(npz_path=f'data/model_optim_{algorithm_name}.npz' )
 
+model.airfoil.plot_naca00xx_section()
+# %%
+data = np.load('data/res_'+'DE'+'.npz')
+X_opt_DE = map_to_physical(data['resX'])
+X_opt_DE[0] *= c
+X_opt_DE[1] *= c
 
-NACA.plot_naca00xx_section_with_cg(t_c=0.15, c=c, N=4000, xcg=x_cg, fill=True, annotate=True)
+data = np.load('data/res_'+'GA'+'.npz')
+X_opt_GA = map_to_physical(data['resX'])
+X_opt_GA[0] *= c
+X_opt_GA[1] *= c
+
+# %%
+plotter.plot_modal_data_two('data/model_optim_GA.npz','data/model_optim_DE.npz')
 # %%

@@ -21,37 +21,56 @@ def plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz'):
     U, f, z, p = D['U'], D['f'], D['damping'], D['params']
 
     # Nom du modèle & style
-    name = str(p['model_aero']).lower()
+    # Robust to params saved with private name '_model_aero'
+    name = str(p.get('model_aero', p.get('_model_aero', 'Theodorsen'))).lower()
     model_name = 'Theodorsen' if name.startswith('theod') else 'QuasiSteady'
     linestyle = '-' if model_name == 'Theodorsen' else '--'
 
-    # Couleurs et labels par mode
-    colors = ['blue', 'red']      # 0 -> T1, 1 -> B2
-    mode_labels = ['B2', 'T1']
+    # Nombre de modes (colonnes)
+    n_modes = int(f.shape[1]) if (hasattr(f, 'ndim') and f.ndim == 2) else 1
+
+    # Couleurs et labels par mode (génériques)
+    # Utilise le cycle de couleurs matplotlib si disponible
+    try:
+        base_colors = plt.rcParams['axes.prop_cycle'].by_key().get('color', [])
+    except Exception:
+        base_colors = []
+    if len(base_colors) < n_modes:
+        colors = [f"C{i}" for i in range(n_modes)]
+    else:
+        colors = base_colors[:n_modes]
+    mode_labels = [f"Mode {j+1}" for j in range(n_modes)]
 
     # Figure
     fig, ax = plt.subplots(2, 1, sharex=True, constrained_layout=True)
+    fig.suptitle(npz_path)
 
     # Fréquences
-    for j in (0, 1):
-        if not np.all(np.isnan(f[:, j])):
-            ax[0].plot(U, f[:, j], color=colors[j], linestyle=linestyle, lw=1.2)
+    if n_modes == 1 and (not hasattr(f, 'ndim') or f.ndim == 1):
+        if not np.all(np.isnan(f)):
+            ax[0].plot(U, f, color=colors[0], linestyle=linestyle, lw=1.2)
+    else:
+        for j in range(n_modes):
+            if not np.all(np.isnan(f[:, j])):
+                ax[0].plot(U, f[:, j], color=colors[j], linestyle=linestyle, lw=1.2)
     ax[0].set_ylabel('f [Hz]')
     ax[0].grid(True, linewidth=0.3, alpha=0.5)
 
     # Amortissement + légende
-    for j in (0, 1):
-        ax[1].plot(U, z[:, j], color=colors[j], linestyle=linestyle, lw=1.2, label=f"{mode_labels[j]}")
-
+    if n_modes == 1 and (not hasattr(z, 'ndim') or z.ndim == 1):
+        ax[1].plot(U, z, color=colors[0], linestyle=linestyle, lw=1.2, label=mode_labels[0])
+    else:
+        for j in range(n_modes):
+            ax[1].plot(U, z[:, j], color=colors[j], linestyle=linestyle, lw=1.2, label=mode_labels[j])
 
     ax[1].set_xlabel('U [m/s]')
     ax[1].set_ylabel('zeta [-]')
     ax[1].grid(True, linewidth=0.3, alpha=0.5)
-    ax[1].legend(frameon=False, ncols=2)
+    ax[1].legend(frameon=False, ncols=min(4, n_modes))
     plt.show()
 
-def plot_modal_data_two(npz_path_a='data/model_params_Theodorsen.npz',
-                        npz_path_b='data/model_params_QuasiSteady.npz'):
+def plot_modal_data_two(npz_path_a,
+                        npz_path_b):
     """
     
     Plot two simulations together with fixed styling.
@@ -72,11 +91,9 @@ def plot_modal_data_two(npz_path_a='data/model_params_Theodorsen.npz',
 
     U = Ua  # assuming Ua and Ub are the same
 
-    # Determine which dataset is Theodorsen/QuasiSteady and assign styles
-    name_a = str(pa['model_aero']).lower() # we get the model_aero parameter from the saved params dict, convert it to string and lowercase it
-    name_b = str(pb['model_aero']).lower() # lower() to put in minuscule
-    style_a = '-' if name_a.startswith('theod') else '--'
-    style_b = '-' if name_b.startswith('theod') else '--'
+
+    style_a = '-'
+    style_b = '--'
 
     # Ensure arrays have up to 2 columns (T1, B2). If only 1, pad with NaN.
     # def take_two(arr: np.ndarray) -> np.ndarray:
@@ -108,13 +125,10 @@ def plot_modal_data_two(npz_path_a='data/model_params_Theodorsen.npz',
     # Bottom subplot: damping + legend here
     for j in (0, 1):
 
-        # Legend entries combine mode and model info
-        model_a = 'Theodorsen' if style_a == '-' else 'QuasiSteady'
-        model_b = 'Theodorsen' if style_b == '-' else 'QuasiSteady'
         # labels += [f"{mode_labels[j]} - {model_a}", f"{mode_labels[j]} - {model_b}"]
 
-        ax[1].plot(U, za[:, j], color=colors[j], linestyle=style_a, lw=1.2, label = mode_labels[j])
-        ax[1].plot(U, zb[:, j], color=colors[j], linestyle=style_b, lw=1.2, label = mode_labels[j])
+        ax[1].plot(U, za[:, j], color=colors[j], linestyle=style_a, lw=1.2, label = mode_labels[j] +' '+ npz_path_a.rsplit('_',1)[-1])
+        ax[1].plot(U, zb[:, j], color=colors[j], linestyle=style_b, lw=1.2, label = mode_labels[j] +' '+ npz_path_b.rsplit('_',1)[-1])
 
     ax[1].set_xlabel('U [m/s]')
     ax[1].set_ylabel('zeta [-]')
@@ -205,10 +219,7 @@ def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize=
     En vrai l'arg "normalize" ne sert à rien comme on traite l'amplitude des ces vecteurs en amont
     '''
 
-    if normalize :
-        sharey=True # on partage les axes que si y'a normalization
-    else:
-        sharey=False
+
 
     # Construire la collection de champs à tracer
     fields = []
@@ -279,7 +290,7 @@ def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize=
 
     if suptitle:
         fig.suptitle(suptitle, y=1.02)
-
+    plt.tight_layout()
     if show:
         plt.show()
 
