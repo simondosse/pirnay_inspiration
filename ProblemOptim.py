@@ -23,6 +23,7 @@ eta_w = 0.005
 eta_alpha = 0.005
 # we define a model with default random parameters for the X[i], those will be updated during the evaluation F(X)
 model = ModelParameters(s, c, x_ea=0.05, x_cg=0.13, m=m, EIx=400, GJ=70, eta_w=eta_w, eta_alpha=eta_alpha, model_aero='Theodorsen')
+
 def constraints(X):
     # Retourner un tableau g(x) <= 0 (inégalités)
     # Pour égalité h(x)=0: return [abs(h(x)) - 1e-6, ...]

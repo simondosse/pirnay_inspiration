@@ -39,7 +39,7 @@ eta_alpha = 0.005 # structural damping ratio in torsion, damping ratio are arbit
 
 ''' Wingtip parameters '''
 
-wingtip_mass_study = False
+wingtip_mass_study = True
 if wingtip_mass_study:
     Mt = 362e-3   # mass of the tip body
     I_alpha_t = 6.11e-4 # mass moment of inertia of the tip body
@@ -51,33 +51,15 @@ else:
     x_t = None
 
 #%%_________________________________________________
-''' Set, run and save models '''
 
-# #Theodorsen model
-# model_theod = ModelParameters(s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, model_aero='Theodorsen')
-# f, damping, _ = ROM.ModalParamDyn(model_theod)
+s=1.5
 
-# model_struc = ModelParameters(s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t)
-# eig_strucS2 = ROM.ModalParamAtRest(model_struc)
-# model_struc.update(s=1.5)
-# eig_strucS15 = ROM.ModalParamAtRest(model_struc)
+model_cross = ModelParameters(s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, model_aero='Theodorsen')
+model_cross.Umax=28
+f, damping, *_ = ROM.ModalParamDyn(model_cross, tracked_idx=(1,2), track_using='field')
+save_modal_data(f = f, damping = damping, model_params=model_cross,out_dir='data', filename='model_cross.npz')
+plotter.plot_modal_data_single(npz_path='data/model_cross.npz' )
 
-
-
-
-
-#%%------------------------------------------------
-hop= False
-if hop:
-    plotter.plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz')
-
-#%%--------------------------------------------------------
-
-    plotter.plot_modal_data_two(npz_path_a='data/model_params_Theodorsen.npz',
-                        npz_path_b='data/model_params_QuasiSteady.npz')
-    plotter.plot_modal_data_two(npz_path_a='data/model_params_TheodorsenS2.npz',
-                        npz_path_b='data/model_params_QuasiSteadyS2.npz')
-    # plot_params_table('data/model_params_Theodorsen.npz')
 
 
 #%%___________________________________________RESOLUTION TEMPORELLE____________________________________

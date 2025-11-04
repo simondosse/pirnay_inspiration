@@ -1046,7 +1046,7 @@ def stateMatrixAero(par,U,omega):
     
     return A
 
-def ModalParamDyn(par, tracked_idx, compute_shapes=True, compute_energy=True, track_using = None):
+def ModalParamDyn(par, tracked_idx=(0,1,2,3), compute_shapes=True, compute_energy=True, track_using = None):
     '''
     Compute the modal parameters of the system for a range of wind speeds.
 
@@ -1062,8 +1062,9 @@ def ModalParamDyn(par, tracked_idx, compute_shapes=True, compute_energy=True, tr
         Modal frequencies in Hz for two tracked modes (shape len(U) x 2).
     damping : np.ndarray
         Modal damping ratios for the two modes (shape len(U) x 2).
-    realpart : np.ndarray
-        Real parts of the corresponding eigenvalues (shape len(U) x 2).
+    w_modes, alpha_modes :
+        equivalent to Psi_wi Psi_ai, spatial modal deformations of the aeroelastic model (not in time!!!)
+        we recall that w_i(y) = Psi_wi = Phi_w @ V (@ eta(t)     w/ eta(t) not considered)
     '''
 
     U = par.U
@@ -1074,7 +1075,8 @@ def ModalParamDyn(par, tracked_idx, compute_shapes=True, compute_energy=True, tr
 
     # choose initial tracked modes indices and set references
     # tracked_idx = (1, 2)  # we follow the B2 and T1 mode
-    tracked_idx = (0,1,2,3)  # actually we want to follow more than 2 modes
+    # tracked_idx = (0,1,2,3)  # actually we want to follow more than 2 modes
+
     f = np.zeros((len(U),len(tracked_idx)))
     damping = np.zeros((len(U),len(tracked_idx)))
     realpart = np.zeros((len(U),len(tracked_idx)))
@@ -1088,6 +1090,8 @@ def ModalParamDyn(par, tracked_idx, compute_shapes=True, compute_energy=True, tr
     # we keep the contributions of each DDL w, alpha for each U
     # maybe we can only follow the modes [1] and [2], not the [0] and the others
     Ny = len(par.y)
+
+    
     w_modes_U = np.zeros((len(U), par.Nq, Ny))
     alpha_modes_U = np.zeros((len(U), par.Nq, Ny))
     f_modes_U = np.zeros((len(U), par.Nq))
@@ -1119,7 +1123,7 @@ def ModalParamDyn(par, tracked_idx, compute_shapes=True, compute_energy=True, tr
         '''necessary for the following modes'''
         # only if shapes/energy requested
         if compute_shapes or compute_energy:
-            w_modes, alpha_modes, energy_dict = _reconstruct_shapes_from_eigvecs(par, eigvals, eigvecs, compute_energy=compute_energy)
+            w_modes, alpha_modes, energy_dict = _reconstruct_shapes_from_eigvecs(par, eigvals, eigvecs)
             if compute_shapes:
                 w_modes_U[i, :, :] = w_modes
                 alpha_modes_U[i, :, :] = alpha_modes
@@ -1131,30 +1135,16 @@ def ModalParamDyn(par, tracked_idx, compute_shapes=True, compute_energy=True, tr
 
         # modes index must be changed when we'll add the v-DOF
         # we only keep the 2nd [1] and 3rd [2] mode (usually it's the 2nd bending mode and 1st torsion mode)
-
-
-        # build identification vectors for all modes this step
-        curr_vecs = [_mode_id_vec(w_modes[j, :], alpha_modes[j, :]) for j in range(par.Nq)]
-
-        if i == 0:
-            # modes tracking
-            ''' /!\ We must check if we always have f(B2)<f(T1) at U=0 ??'''
-            prev_refs = [curr_vecs[j] for j in tracked_idx] # mode à U=0 deviennet notre ref pour la suite
-        else:
-            # assign by MAC against previous references
-            tracked_idx, MAC = _assign_by_mac(prev_refs, curr_vecs)
-            # update references
-            prev_refs = [curr_vecs[j] for j in tracked_idx]
         
         # mode ID vectors for tracking (either 'field' or None)
         # field : we use the w_modes and a_modes shapes in the physical space to track the modes
         # None  : we use the eigvecs vi from A to track the modes
-        if i == 0: # mode à U=0 deviennet notre ref pour la suite
+        if i == 0:
             if (track_using == 'fields') and compute_shapes:
                 curr_vecs = [_mode_id_vec(w_modes[j, :], alpha_modes[j, :]) for j in range(par.Nq)]
             else:
                 curr_vecs = [_mode_id_from_eigvec(par, eigvecs[:par.Nq, j]) for j in range(par.Nq)]
-            prev_refs = [curr_vecs[j] for j in tracked_idx]
+            prev_refs = [curr_vecs[j] for j in tracked_idx]  # mode à U=0 devient notre ref pour la suite
         else:
             # assign by MAC against previous references
             if (track_using == 'fields') and compute_shapes:
