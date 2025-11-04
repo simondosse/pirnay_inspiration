@@ -45,7 +45,7 @@ def cost(X):
     return Uc
 
 class ProblemOptim(ElementwiseProblem): # ElementwiseProblem est une sous-classe de Problem qui serait plus simple à utiliser
-    def __init__(self, n_var,n_obj,n_ieq_constr,xl,xu):
+    def __init__(self, n_var,n_obj,n_ieq_constr,xl,xu,target_mode_idx):
         
         #Initialisation de l'objet :
         #n_var : nombre de variables d'optimisation
@@ -65,6 +65,7 @@ class ProblemOptim(ElementwiseProblem): # ElementwiseProblem est une sous-classe
                          xu=xu)
         # self.ind_to_optim = ind_to_optim
         self.count = 0
+        self.target_mode_idx = target_mode_idx
 
         # Lancement de l'algorithme d'optimisation
         # minimize renvoie un :class:`~pymoo.core.result.Result`

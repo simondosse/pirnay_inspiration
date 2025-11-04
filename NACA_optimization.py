@@ -40,6 +40,7 @@ n_ieq_constr = 0 # nombre de contraintes à respecter (G)
 problem_optim_NACA  = ProblemOptim(n_var = para_interval.shape[0], n_obj = n_obj, 
                                     n_ieq_constr = n_ieq_constr, # nombre de contrainted par inéquation
                                     xl=xl, xu=xu, # bornes inf et sup de tous nos paramètres variables
+                                    target_mode_idx=1 # the mode on which we'll look for the lowest Uc
 )
 
 algorithm_GA = GA(
