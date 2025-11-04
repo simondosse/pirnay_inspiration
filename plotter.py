@@ -2,8 +2,10 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from data_manager import _load_npz
+from matplotlib import animation
 
+from data_manager import _load_npz
+from typing import Tuple, Optional 
 
 def plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz'):
     """
@@ -174,6 +176,148 @@ def plot_params_table(npz_path: str):
 
     plt.tight_layout()
     plt.show()
+
+def plot_vi(vi: np.ndarray,
+            Nw: int,
+            Nalpha: int,
+            kind: str = 'abs',              # 'abs' | 'real_imag' | 'mag_phase'
+            normalize: Optional[str] = None,# None | 'max' | 'l2'
+            align_phase: bool = False,
+            ref_idx: Optional[int] = None,
+            figsize: Tuple[int, int] = (9, 4),
+            bending_label: str = 'vw (bending)',
+            torsion_label: str = 'va (torsion)',
+            ax: Optional[plt.Axes] = None   # NEW: draw into an existing axis
+):
+    vi = np.asarray(vi).reshape(-1)
+    assert vi.size == Nw + Nalpha, "vi must have length Nw+Nalpha"
+    v_plot = vi.copy()
+
+    # Optional phase alignment
+    if align_phase and v_plot.size > 0:
+        if ref_idx is None:
+            ref_idx = int(np.argmax(np.abs(v_plot)))
+        ang = np.angle(v_plot[ref_idx])
+        v_plot = v_plot * np.exp(-1j * ang)
+
+    # normalization across the full vector (vw+va)
+    if normalize == 'max':
+        a = np.max(np.abs(v_plot)) or 1.0
+        v_plot = v_plot / a
+    elif normalize == 'l2':
+        a = np.sqrt(np.vdot(v_plot, v_plot).real) or 1.0
+        v_plot = v_plot / a
+
+    vw = v_plot[:Nw]
+    va = v_plot[Nw:]
+
+    # mag_phase needs two axes -> only allowed when ax is None
+    if kind == 'mag_phase' and ax is not None:
+        raise ValueError("kind='mag_phase' requires ax=None (creates a 2-row figure)")
+
+    if kind == 'mag_phase':
+        fig, axes = plt.subplots(2, 1, figsize=figsize, constrained_layout=True)
+        ax_mag, ax_phi = axes
+        ax_mag.bar(np.arange(Nw), np.abs(vw), color='#4C78A8', label=bending_label)
+        ax_mag.bar(Nw + np.arange(Nalpha), np.abs(va), color='#F58518', label=torsion_label)
+        ax_mag.set_xticks(np.arange(Nw + Nalpha))
+        ax_mag.set_xticklabels([f"w{k+1}" for k in range(Nw)] + [f"α{k+1}" for k in range(Nalpha)])
+        ax_mag.set_ylabel("|coeff|"); ax_mag.legend(); ax_mag.set_title("Modal coefficients magnitude")
+
+        phase = np.angle(np.concatenate([vw, va]))
+        ax_phi.plot(np.arange(Nw + Nalpha), phase, 'o-', color='#6F4E7C')
+        ax_phi.axhline(0.0, color='k', lw=0.8, alpha=0.5)
+        ax_phi.set_xticks(np.arange(Nw + Nalpha))
+        ax_phi.set_xticklabels([f"w{k+1}" for k in range(Nw)] + [f"α{k+1}" for k in range(Nalpha)])
+        ax_phi.set_ylabel("phase [rad]"); ax_phi.set_title("Modal coefficients phase")
+        return fig, axes
+
+    # Single-axis variants
+    created_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=figsize, constrained_layout=True)
+        created_fig = True
+
+    idx_w = np.arange(Nw)
+    idx_a = Nw + np.arange(Nalpha)
+
+    if kind == 'abs':
+        ax.bar(idx_w, np.abs(vw), color='#4C78A8', label=bending_label)
+        ax.bar(idx_a, np.abs(va), color='#F58518', label=torsion_label)
+        ax.set_ylabel("|coeff|")
+        ax.set_title("Modal coefficients (magnitude)")
+    elif kind == 'real_imag':
+        width = 0.38
+        ax.bar(idx_w - width/2, vw.real, width, color='#4C78A8', label=f"Re {bending_label}")
+        ax.bar(idx_w + width/2, vw.imag, width, color='#72B7B2', label=f"Im {bending_label}")
+        ax.bar(idx_a - width/2, va.real, width, color='#F58518', label=f"Re {torsion_label}")
+        ax.bar(idx_a + width/2, va.imag, width, color='#E45756', label=f"Im {torsion_label}")
+        ax.set_ylabel("value")
+        ax.set_title("Modal coefficients (real/imag)")
+        ax.axhline(0.0, color='k', lw=0.8, alpha=0.5)
+    else:
+        raise ValueError("kind must be 'abs', 'real_imag', or 'mag_phase'")
+
+    ax.set_xticks(np.arange(Nw + Nalpha))
+    ax.set_xticklabels([f"w{k+1}" for k in range(Nw)] + [f"α{k+1}" for k in range(Nalpha)])
+    ax.grid(True, linewidth=0.3, alpha=0.5)
+
+    if created_fig:
+        ax.legend()
+        return fig, ax
+    else:
+        return ax
+
+
+def plot_vi_grid(Vq: np.ndarray,Nw: int,Nalpha: int,
+                 freqs_hz: Optional[np.ndarray] = None,
+                 kind: str = 'abs',              # 'abs' | 'real_imag'
+                 normalize: Optional[str] = 'l2',# None | 'max' | 'l2' (per mode)
+                 align_phase: bool = False,
+                 sharey: bool = True,
+                 figsize: Optional[Tuple[float, float]] = None,
+                 suptitle: Optional[str] = None,
+                 show: bool = True,
+                 bending_label: str = 'vw (bending)',
+                 torsion_label: str = 'va (torsion)',
+):
+    Vq = np.asarray(Vq)
+    assert Vq.shape[0] == Nw + Nalpha, "Vq must have Nw+Nalpha rows"
+    n_modes = Vq.shape[1]
+
+    if figsize is None:
+        figsize = (max(5.0, 3.0 * n_modes), 3.2)
+
+    fig, axes = plt.subplots(1, n_modes, sharey=sharey, figsize=figsize, constrained_layout=True)
+    if n_modes == 1:
+        axes = np.array([axes])
+
+    for i in range(n_modes):
+        ax = axes[i]
+        plot_vi(
+            vi=Vq[:, i],
+            Nw=Nw, Nalpha=Nalpha,
+            kind=kind,
+            normalize=normalize,
+            align_phase=align_phase,
+            bending_label=bending_label,
+            torsion_label=torsion_label,
+            ax=ax,  # reuse single-axis variant
+        )
+        title = f"Mode {i+1}"
+        if freqs_hz is not None:
+            title += f" (f={float(freqs_hz[i]):.2f} Hz)"
+        ax.set_title(title)
+
+        if i == n_modes - 1:
+            ax.legend(frameon=False)
+
+    if suptitle:
+        fig.suptitle(suptitle, y=1.02)
+    plt.tight_layout()
+    if show:
+        plt.show()
+    return fig, axes
 
 def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize=False,colors=None,styles=None,sharey=True,figsize=None,suptitle=None,show=True):
     '''
@@ -500,3 +644,191 @@ def plot_mode_shapes_over_U_grid(y, U, WU=None, ALPHAU=None, f_modes_U=None,
 
     return fig, axes
 
+def animate_beam(par,t,X,U=None,n_stations=15,interval=30,
+                 scale_w=1.0,scale_alpha=1.0,scale_chord=1.0,
+                 show_airfoil=False,airfoil_points=60,
+                 x_ref='EA',            # 'EA' ou 'CG' comme point de rotation visuelle
+                 ylim=None,
+                 xlim=None,
+                 save_path=None,        # '.mp4' ou '.gif' si tu veux enregistrer
+                 repeat=True,
+):
+    """
+    Anime la poutre à partir de X(t): ligne d'axe w(y,t) + cordes locales orientées par alpha(y,t).
+
+    - par.airfoil fournit la géométrie NACA (c, x_ea, x_cg, h(x)).
+    - On projette en 2D (plan y–z). La torsion crée un décalage vertical ~ (x - x_ea)*sin(alpha).
+
+    Paramètres
+    ----------
+    par : ModelParameters (cf. input.py)
+    t : (nt,) array
+    X : (nt, 2*(Nv+Nw+Nalpha)) array (sortie integrate_state_rk)
+    U : float ou None (annot)
+    n_stations : nb de stations spanwise où dessiner les cordes locales
+    interval : ms entre frames (matplotlib.animation)
+    scale_w : facteur d’échelle sur w (visuel)
+    scale_alpha : facteur d’échelle sur alpha (visuel)
+    scale_chord : facteur d’échelle visuel de la corde (longueur affichée)
+    show_airfoil : si True, projette un petit contour 2D (haut/bas) à chaque station
+    airfoil_points : nb de points le long de la corde pour le contour 2D
+    x_ref : 'EA' ou 'CG' (point de pivot pour la visualisation)
+    ylim, xlim : limites axes (z et y)
+    save_path : chemin pour enregistrer (None pour ne pas enregistrer)
+    repeat : boucle l’animation
+
+    Retour
+    ------
+    fig, ani
+    """
+    from ROM import _modal_to_physical_fields, X_to_q  # import local pour éviter cycles
+
+    t = np.asarray(t).ravel()
+    nt = t.size
+    if X.shape[0] != nt:
+        raise ValueError("X and t must have the same dimensions.")
+
+    # we get the generalized coordinates from the state vector X(t)
+    qw_t, qa_t = X_to_q(par = par, X=X, t=t)
+
+    # Reconstruction champs (nt, Ny)
+    w_map, a_map = _modal_to_physical_fields(par, qw_t, qa_t)
+    y = np.asarray(par.y, dtype=float).ravel()
+    Ny = y.size
+    if w_map.shape[0] != nt or w_map.shape[1] != Ny:
+        raise ValueError("Dimensions de w_map inattendues.")
+    if a_map.shape[0] != nt or a_map.shape[1] != Ny:
+        raise ValueError("Dimensions de a_map inattendues.")
+
+    # Géométrie NACA
+    af = par.airfoil
+    c = float(af.c)
+    x_ea = float(af.x_ea)
+    x_cg = float(af.x_cg)
+    pivot_x = x_ea if (str(x_ref).upper() == 'EA') else x_cg
+
+    # Stations pour dessiner les cordes
+    n_st = int(max(2, min(n_stations, Ny)))
+    idx_st = np.linspace(0, Ny - 1, n_st, dtype=int)
+    y_st = y[idx_st]
+
+    # Prépare figure
+    fig, ax = plt.subplots(figsize=(10, 4))
+    title = ax.set_title("Structural animation")
+    ax.set_xlabel("y [m]")
+    ax.set_ylabel("z [m]")
+    if xlim is None:
+        ax.set_xlim(y[0], y[-1])
+    else:
+        ax.set_xlim(*xlim)
+
+    # Estimation basique des bornes z si non données
+    z_est = scale_w * np.max(np.abs(w_map))
+    chord_span = scale_chord * (c) * 0.5  # excursion verticale max approx due à torsion
+    z_pad = 0.1 * max(1.0, z_est + chord_span)
+    if ylim is None:
+        ax.set_ylim(-z_est - chord_span - z_pad, z_est + chord_span + z_pad)
+    else:
+        ax.set_ylim(*ylim)
+
+    # Ligne d'axe (w)
+    center_line, = ax.plot([], [], 'k-', lw=1.8, label='centerline w(y,t)')
+
+    # Cordes locales (LE–TE) + marqueurs EA/CG
+    chord_lines = []
+    ea_points = []
+    cg_points = []
+    for _ in idx_st:
+        ln, = ax.plot([], [], color='tab:blue', lw=1.2, alpha=0.9)
+        chord_lines.append(ln)
+        ea, = ax.plot([], [], 'ro', ms=3, alpha=0.8)  # EA
+        ea_points.append(ea)
+        cg, = ax.plot([], [], 'go', ms=3, alpha=0.8)  # CG
+        cg_points.append(cg)
+
+    # Option: petit contour airfoil projeté (yz)
+    af_lines = []
+    if show_airfoil:
+        x_samp = np.linspace(0.0, c, int(max(airfoil_points, 20)))
+        z_upper = +np.interp(x_samp, af.x, af.h)  # h(x) déjà en mètres
+        z_lower = -z_upper
+        for _ in idx_st:
+            up, = ax.plot([], [], color='0.5', lw=0.8, alpha=0.6)
+            lo, = ax.plot([], [], color='0.5', lw=0.8, alpha=0.6)
+            af_lines.append((up, lo))
+    else:
+        x_samp = None
+        z_upper = None
+        z_lower = None
+
+    ax.grid(True, linewidth=0.3, alpha=0.5)
+    ax.legend(loc='upper right', frameon=False)
+
+    def init():
+        center_line.set_data([], [])
+        for ln in chord_lines:
+            ln.set_data([], [])
+        for p in ea_points + cg_points:
+            p.set_data([], [])
+        if show_airfoil:
+            for up, lo in af_lines:
+                up.set_data([], [])
+                lo.set_data([], [])
+        return [center_line, *chord_lines, *ea_points, *cg_points] + ([l for pair in af_lines for l in pair] if show_airfoil else [])
+
+    def update(frame):
+        w = scale_w * w_map[frame, :]               # (Ny,)
+        a = scale_alpha * a_map[frame, :]           # (Ny,)
+
+        # Ligne d’axe
+        center_line.set_data(y, w)
+
+        # Cordes locales
+        for k, j in enumerate(idx_st):
+            yj = y_st[k]
+            wj = w[j]
+            aj = a[j]
+
+            # Segment LE–TE (projection 2D yz) pivoté autour de pivot_x
+            # z(x) = wj + (x - pivot_x) * sin(alpha_j) ; x projeté via scale_chord
+            x_le, x_te = 0.0, c
+            z_le = wj + scale_chord * (x_le - pivot_x) * np.sin(aj)
+            z_te = wj + scale_chord * (x_te - pivot_x) * np.sin(aj)
+            chord_lines[k].set_data([yj, yj], [z_le, z_te])
+
+            # EA / CG (z au pivot_x et au x_cg)
+            z_ea = wj + scale_chord * (x_ea - pivot_x) * np.sin(aj)
+            z_cg = wj + scale_chord * (x_cg - pivot_x) * np.sin(aj)
+            ea_points[k].set_data([yj], [z_ea])
+            cg_points[k].set_data([yj], [z_cg])
+
+            # Contour airfoil projeté
+            if show_airfoil:
+                # rotation petite mais on garde sin/cos pour robustesse
+                z_up = wj + scale_chord * (x_samp - pivot_x) * np.sin(aj) + z_upper * np.cos(aj)
+                z_lo = wj + scale_chord * (x_samp - pivot_x) * np.sin(aj) + z_lower * np.cos(aj)
+                # on trace en yz: y = const, z = f(x)
+                # pour alléger, on ne montre que l’épaisseur (projection z)
+                af_lines[k][0].set_data(np.full_like(x_samp, yj), z_up)
+                af_lines[k][1].set_data(np.full_like(x_samp, yj), z_lo)
+
+        # Titre
+        if U is not None:
+            title.set_text(f"Structural mode animation  |  U = {U} m/s  |  t = {t[frame]:.3f} s")
+        else:
+            title.set_text(f"Structural mode animation  |  t = {t[frame]:.3f} s")
+
+        return [center_line, *chord_lines, *ea_points, *cg_points] + ([l for pair in af_lines for l in pair] if show_airfoil else [])
+
+    ani = animation.FuncAnimation(
+        fig, update, frames=nt, init_func=init, interval=interval, blit=True, repeat=repeat
+    )
+
+    if save_path:
+        ext = str(save_path).lower().rsplit('.', 1)[-1]
+        if ext == 'gif':
+            ani.save(save_path, writer='pillow', fps=max(1, int(1000 / interval)))
+        else:
+            ani.save(save_path, writer='ffmpeg', fps=max(1, int(1000 / interval)))
+
+    return fig, ani

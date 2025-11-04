@@ -3,6 +3,7 @@ import numpy as np
 import NACA
 import ROM
 import plotter
+import matplotlib.pyplot as plt
 from input import ModelParameters
 from data_manager import save_modal_data
 
@@ -21,8 +22,8 @@ from pymoo.termination.default import DefaultMultiObjectiveTermination, DefaultS
 
 from pymoo.optimize import minimize
 from ProblemOptim import ProblemOptim
-
-
+#%%
+##########################################################################
 coeff_low, coeff_high = 0.6, 1.4
 para_interval = np.array([
     [0.0, 1.0],                             # u x_ea/c [0.15,0.5]
@@ -175,4 +176,67 @@ X_opt_GA[1] *= c
 
 # %%
 plotter.plot_modal_data_two('data/model_optim_GA.npz','data/model_optim_DE.npz')
+
+
+
+
+#%%______________________ test de Uc(x1) pour voir comment on rempli les trous
+s, c = 2.0, 0.2
+m = 2.4
+eta_w = 0.005
+eta_alpha = 0.005
+EIx = 428
+GJ = 48
+x_ea = 0.033
+model = ModelParameters(s, c, x_ea=x_ea, x_cg=x_ea, m=m, EIx=EIx, GJ=GJ, eta_w=eta_w, eta_alpha=eta_alpha,model_aero= 'Theodorsen')
+
+x_cg_list = np.linspace(x_ea,0.8*c,20)
+Uc_map = []
+status_list = []
+i=1
+for x_cg in x_cg_list:
+    model.airfoil.x_cg = x_cg
+    _, damping, *_ = ROM.ModalParamDyn(model)
+    Uc, _ , status= ROM.damping_crossing_slope(U = model.U, damping = damping[:,1],return_status=True)
+    Uc_map.append(Uc)
+    status_list.append(status)
+    
+    print(f'{i}/{len(x_cg_list)}')
+    i+=1
+
+Uc_map = np.array(Uc_map)
+status_list = np.array(status_list)
+
+fig, ax = plt.subplots(figsize=(7, 4))
+
+# Courbe pour relier les points
+ax.plot(x_cg_list/c, Uc_map, '-', color='lightgray', linewidth=1.5, zorder=1, label=r'$U_c$ (ligne)')
+
+# Styles par statut
+status_style = {
+    'cross':       dict(color='tab:green',  marker='o', label='cross'),
+    'extrapolated':dict(color='tab:orange', marker='s', label='extrapolated'),
+    'censored':    dict(color='tab:red',    marker='X', label='censored'),
+}
+
+# Scatter par statut
+for key, sty in status_style.items():
+    idx = np.where(status_list == key)[0]
+    if idx.size == 0:
+        continue
+    ax.scatter(x_cg_list[idx]/c, Uc_map[idx],
+               s=60, marker=sty['marker'], color=sty['color'],
+               edgecolors='k', linewidths=0.5, zorder=2, label=sty['label'])
+
+# Style et détails
+ax.set_xlabel(r'$x_{cg}/c$', fontsize=12)
+ax.set_ylabel(r'$U_c$ [m/s]', fontsize=12)
+ax.set_title(r'$U_c(x_{cg})$', fontsize=13, fontweight='bold')
+ax.grid(True, which='both', linestyle='--', alpha=0.6)
+ax.set_xlim(min(x_cg_list)/c, max(x_cg_list)/c)
+ax.tick_params(axis='both', labelsize=10)
+ax.legend(title='status', frameon=False)
+
+plt.tight_layout()
+plt.show()
 # %%

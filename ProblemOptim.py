@@ -37,7 +37,10 @@ def cost(X):
     model.GJ = X[3]
 
     _, damping, *_ = ROM.ModalParamDyn(model)
-    Uc, _ = ROM.damping_crossing_slope(U = model.U, damping = damping[:,0])
+    Uc, _ = ROM.damping_crossing_slope(U = model.U, damping = damping[:,1]) # /!\ la matrice de damping regarde tous les modes 0,1,2,3
+    '''
+    the big problem is that Uc extrapolated can be the lowest Uc, but if we extrapolated that means we don't have a damping cross so we want to avoid that
+    '''
     return Uc
 
 class ProblemOptim(ElementwiseProblem): # ElementwiseProblem est une sous-classe de Problem qui serait plus simple à utiliser

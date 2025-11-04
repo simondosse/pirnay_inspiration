@@ -3,7 +3,8 @@ from scipy.interpolate import interp1d
 from scipy.integrate import quad
 from scipy.special import kv
 import itertools
-
+import matplotlib.pyplot as plt
+import sys
 ''' General functions '''
 
 def _eigs_sorted_positive_imag(A, Nq=None):
@@ -32,8 +33,13 @@ def _eigs_sorted_positive_imag(A, Nq=None):
 
 def _phase_align_column(vec):
     # Aligne la phase de tout le vecteur en se basant sur la plus grande composante
+    # souvent inutile si dernière on travaille avec une val abs ||
     k0 = int(np.argmax(np.abs(vec))) # k0 indice de la composante à la plus grande amplitude
-    return vec * np.exp(-1j * np.angle(vec[k0])) if vec[k0] != 0 else vec
+
+    if vec[k0] != 0:
+        return vec * np.exp(-1j * np.angle(vec[k0])), k0, -np.angle(vec[k0])
+    else:
+        return vec, k0, 0.0
     '''
     on fait tourner le vecteur pour que la composante max soit réelle et positive (puisqu'on a annulé sa phase en le faisant tourner)
     comme ça la multiplication avec Phi_w ou Phi_alpha se fera bien
@@ -49,13 +55,27 @@ def _stack_mode_shapes(phi_list):
     return np.vstack(phi_list) if len(phi_list) > 0 else np.zeros((0, 1))
 
 def _mode_id_vec(w_mode, alpha_mode):
-    # concatenate shapes into one vector for correlation; use real parts
+    '''
+    Function to concatenate shapes IN PHYSICAL FIELDS into one vector for correlation with MAC then; use real parts
+    '''
     hop = np.hstack([np.asarray(w_mode).ravel(), np.asarray(alpha_mode).ravel()])
     '''
     np.hstack([np.array([1, 2, 3]), np.array([4, 5, 6])])
     -> array([1, 2, 3, 4, 5, 6])
     '''
     return hop
+
+def _mode_id_from_eigvec(par, vi):
+    '''
+    Function to concatenate the mode shape of A into one vector for correlation with MAC then; use real parts
+    We normalize so the MAC scores can be compared to one an other
+    '''
+    # vi = eigvecs[:par.Nq, k]
+    vw = vi[:par.Nw]
+    va = vi[par.Nw:par.Nq]
+    x = np.concatenate([np.abs(vw), np.abs(va)]).astype(float)
+    n = np.linalg.norm(x) or 1.0
+    return x / n
 
 def _mac(a, b, eps=1e-16):
     '''
@@ -181,12 +201,18 @@ def bendingModeShapes(par):
         b_ = np.cos(beta[i] * par.y) + np.cosh(beta[i] * par.y)
         phi_dotdot = - (a_ - gamma * b_) * (beta[i]**2)
 
-        modal_mass =  np.trapezoid(par.airfoil.m*phi**2, par.y) # ∫ m(y) φ(y)² dy
+        modal_mass =  np.trapezoid(phi * par.airfoil.m * phi, par.y) # ∫ m(y) φ(y)² dy
 
-        phi_normalized.append(phi)#/np.sqrt(modal_mass))
-        phi_dot_normalized.append(phi_dot)#/np.sqrt(modal_mass))
-        phi_dotdot_normalized.append(phi_dotdot)#/np.sqrt(modal_mass))
-        
+        phi_normalized.append(phi/np.sqrt(modal_mass))#/np.sqrt(modal_mass)
+        phi_dot_normalized.append(phi_dot/np.sqrt(modal_mass))#/np.sqrt(modal_mass)
+        phi_dotdot_normalized.append(phi_dotdot/np.sqrt(modal_mass))#/np.sqrt(modal_mass)
+    
+    phi_normalized = np.array(phi_normalized)
+    phi_dot_normalized = np.array(phi_dot_normalized)
+    phi_dotdot_normalized = np.array(phi_dotdot_normalized)
+
+    # print('w')
+    # print(phi_normalized.T.shape)
     return phi_normalized, phi_dot_normalized, phi_dotdot_normalized
     
 def torsionModeShapes(par):
@@ -241,21 +267,29 @@ def torsionModeShapes(par):
     for i in range(n):
 
         phi = np.sin(beta[i] * par.y) 
-        phi_normalized.append(phi)
-
+        
         phi_dot = np.cos(beta[i] * par.y) * beta[i]
-        phi_dot_normalized.append(phi_dot)
-
+        
         phi_dotdot = - np.sin(beta[i] * par.y) * (beta[i] ** 2)
-        phi_dotdot_normalized.append(phi_dotdot)
 
+        modal_mass =  np.trapezoid(phi * par.airfoil.Ialpha_EA * phi, par.y)
+        phi_normalized.append(phi/np.sqrt(modal_mass))
+        phi_dot_normalized.append(phi_dot/np.sqrt(modal_mass))
+        phi_dotdot_normalized.append(phi_dotdot/np.sqrt(modal_mass))
+
+    phi_normalized = np.array(phi_normalized)
+    phi_dot_normalized = np.array(phi_dot_normalized)
+    phi_dotdot_normalized = np.array(phi_dotdot_normalized)
+
+    # print('alphae')
+    # print(phi_normalized.T.shape)
     return phi_normalized, phi_dot_normalized, phi_dotdot_normalized
 
 def build_state_q_from_real(par, w_tip=0.0, alpha_tip=0.0, wdot_tip=0.0, alphadot_tip=0.0):
     """
-    Construit x0 (2*(Nv+Nw+Nalpha),) à partir de conditions initiales
+    Construit x0 (2*(Nv+Nw+Nalpha),) à partir de conditions initiales dans les champs
     physiques en bout de poutre: w_tip (m) et alpha_tip (rad), et leurs vitesses.
-    Pour ne pas passer pas les q_w et q_alpha qui sont peu intuitif
+    Pour ne pas passer pas les q_w et q_alpha qui sont peu intuitifs pour une position initiale par exemple
 
     Paramètres
     ----------
@@ -299,6 +333,13 @@ def build_state_q_from_real(par, w_tip=0.0, alpha_tip=0.0, wdot_tip=0.0, alphado
 
         qw = argmin||q||_2 such as Phi_w(tip)q = w(tip)
 
+        Si Nw = 1 alors il y a une seule solution (inverse scalaire classique)
+
+        si Nw > 1 alors infinité de solution
+
+        np.linalg.lstsq rédout Phi_w(tip)@qw = w(tip) en donnant la solution de norme minimale 
+        qw = Phi_w[PSEUDO-INVERSE](tip) @ w(tip)
+
         '''
         qw, *_ = np.linalg.lstsq(phi_w_tip, np.array([w_tip], dtype=float), rcond=None)
         x0[Nv:Nv + Nw] = qw.ravel()
@@ -316,6 +357,40 @@ def build_state_q_from_real(par, w_tip=0.0, alpha_tip=0.0, wdot_tip=0.0, alphado
         x0[n_q + Nv + Nw:n_q + Nv + Nw + Nalpha] = qadot.ravel()
 
     return x0
+
+def X_to_q(par, X, t):
+    '''
+    Function to get the generalised coordinates from the state vector X(t) (X[ qw1 qw2 qw3 qa1 qa2 qa3 + vitesse])
+    We just take them from the vector depending on the selected number of modes
+
+    Parameters
+    ----------
+    par : ModalParameters
+    X : np.array [nt*(Nw+Nv+Na)]
+        state vector contains the generalised coordinates
+    t : 
+    Returns
+    ----------
+    qw_t
+    qa_t
+        
+    '''
+
+    nt = t.size
+
+    # Récupération des coordonnées modales depuis X
+    Nv = par.Nv
+    Nw = par.Nw
+    Na = par.Nalpha
+    n_q = X.shape[1] // 2
+    Q = X[:, :n_q] # we only take the deplacement coordinates
+
+    i_w0, i_w1 = Nv, Nv + Nw
+    i_a0, i_a1 = i_w1, i_w1 + Na
+    qw_t = Q[:, i_w0:i_w1] if Nw > 0 else np.zeros((nt, 0))
+    qa_t = Q[:, i_a0:i_a1] if Na > 0 else np.zeros((nt, 0))
+
+    return qw_t, qa_t
 
 def _modal_to_physical_fields(par, qw_t, qa_t, return_shapes=False):
     """
@@ -366,15 +441,36 @@ def _modal_to_physical_fields(par, qw_t, qa_t, return_shapes=False):
         return w_map, alpha_map, Phi_w, Phi_a
     return w_map, alpha_map
 
-def _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=None):
+def _reconstruct_shapes_from_eigvecs(par, eigvals, eigvecs):
     """
+    On reconstruit les contributions de w et alpha pour chaque mode i,
+    - en déplacement wi(y) alphai(y)
+    - en densité energie cinétique ew(y), ea(y) (normalisée pour pouvoir comparer entre mode car dépend de omega)
+    - en dénsité energie elastique Uw(y), Ua(y) (pas besoin de normalisation car ça dépend pas explicitement de omega, en fait si car dans les phidotdot y'a du omega qui apparait dans les Beta)
+
+    les deux types de densité d'énergie donnent pas les mêmes infos
+
     eigvecs: colonnes = modes (taille 2(Nw+Nalpha) x n_modes) ; on utilise la partie positions.
     Retourne: w_modes, alpha_modes de tailles (n_modes, Ny).
     Phi
+
+    Parameters
+    ----------
+    par : ModelParameters
+    eigvals :
+        matrices des valeurs propres déjà ordonnées et triées
+    eigvecs:
+        matrices des vecteurs propres déjà ordonés et triés
+
+    Returns
+    -------
+    w_modes, alpha_modes:
+        correspondent aux modes Psi_w, càd que c'est les contributions en flexions et torsions SPATIALES des déformées modales du probleme aeroélastique
+        c'est wi(y) = Psi_w_i(y) = Phi_w @
     """
     # print("Calcule des contributions des ddl par mode")
     # print(f"normalize = {normalize}")
-    Nq = par.Nw + par.Nalpha
+    Nq = par.Nv + par.Nw + par.Nalpha
     Vq = eigvecs[:Nq, :]  # partie positions, notre vecteur d'état est [qw1 qw2 qw3 qa1 qa2 qa3 qw1' qw2' qw3' qa1' qa2' qa3']'
     nm = Vq.shape[1]
 
@@ -388,82 +484,127 @@ def _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=None):
 
     Mq = getStructuralMassMatrix(par)
     Kq = getStructuralStiffness(par)
-    energy_type='mass'
 
-    phi_w, _, _ = bendingModeShapes(par) # phi_w (Nw,Ny) (but not stack)
-    phi_alpha, _, _ = torsionModeShapes(par) # phi_alpha (Nalpha,Ny) (but not stack)
+    phi_w, phi_dot_w, phi_dotdot_w = bendingModeShapes(par) # phi_w (Nw,Ny) (but not stack)
+    phi_alpha, phi_dot_alpha, phi_dotdot_alpha = torsionModeShapes(par) # phi_alpha (Nalpha,Ny) (but not stack)
     Phi_w = _stack_mode_shapes(phi_w)         # (Nw, Ny)
     Phi_alpha = _stack_mode_shapes(phi_alpha) # (Nalpha, Ny)
 
     Ny = Phi_w.shape[1] if par.Nw > 0 else (Phi_alpha.shape[1] if par.Nalpha > 0 else 0)
+    
+    # pulsations des modes
+    omega = np.imag(eigvals)
+
+    # densité d'énergie cinétique par mode
+    Tw = np.zeros((nm, Ny), dtype=float)
+    Ta = np.zeros((nm, Ny), dtype=float)
+
+    # énergie totale par mode
+    T_Ew = np.zeros((nm, Ny), dtype=float)
+    T_Ea = np.zeros((nm, Ny), dtype=float)
+
+    # densité d'énergie cinétique normalisée, nécessaire pour comparer entre les modes car sinon c'est proportionnel à omega²
+    T_ew = np.zeros((nm, Ny), dtype=float)
+    T_ea = np.zeros((nm, Ny), dtype=float)
+
+    # densité d'énergie élastique 
+    Uw = np.zeros((nm, Ny), dtype=float)
+    Ua = np.zeros((nm, Ny), dtype=float)
+    # énergie totale par mode
+    U_Ew = np.zeros((nm, Ny), dtype=float)
+    U_Ea = np.zeros((nm, Ny), dtype=float)
+    # densité d'énergie normalisée
+    U_ew = np.zeros((nm, Ny), dtype=float)
+    U_ea = np.zeros((nm, Ny), dtype=float)
+
+    # contribution réelle de w et alpha par mode
     w_modes = np.zeros((nm, Ny), dtype=float)
     alpha_modes = np.zeros((nm, Ny), dtype=float)
+    '''
+    Ψ_w,i(y) = Φ_w(y) @ vw
+    '''
 
-    for i in range(nm):
-        qi = _phase_align_column(Vq[:, i]) # qi est comme Vi quand on considère que la forme le eta(t) saute (eta coordonées modales ici)
+    for i in range(nm): # i parcourt les modes aeroelastiques,
+        
+        # vi,*_ = _phase_align_column(Vq[:, i]) # qi est comme Vi quand on considère que la forme le eta(t) saute (eta coordonées modales ici)
+        vi = Vq[:,i]
+        '''
+        à partir de ça on peut déjà avoir la part de contribution des modes de déformées de la structure à U=0 dans les modes de déformées du
+        système aeroelastique
+        '''
 
         # Normalisation énergétique des vecteurs propres (avant reconstruction des champs)
+        '''
+        la normalisation des modes par la masse est utile pour comparer les modes entre eux,
+        pas utile si on veut simplement comparer alpha et w dans un même mode
 
-        if energy_type == 'mass': # qi@M@qi = 1
-            e = np.real(np.vdot(qi, Mq @ qi))
-            if e > 0:
-                qi = qi / np.sqrt(e)
-                if i == 0:
-                    print('energy mass normalization')
-            
-        elif energy_type == 'stiffness': # qi@K@qi = 1
-            e = np.real(np.vdot(qi, Kq @ qi))
-            if e > 0:
-                qi = qi / np.sqrt(e)
-                if i == 0:
-                    print('energy stiffness normalization')
+        actually as we normalized the spatiales modes shapes of the structure (phi_w phi_a contained in A) we don't
+        need to normalize again
+        '''
+        
+        vw = vi[:par.Nw]
+        va = vi[par.Nw:Nq]
+        # print(vw.shape)
+        # print(Phi_w.shape)
 
-        qw = qi[:par.Nw]
-        qa = qi[par.Nw:Nq]
+        '''
+        en fait il faut récupérer w_modes avec la partie imaginaire aussi
+        '''
 
         if par.Nw > 0:
-            w_modes[i, :] = np.real(qw @ Phi_w)  # (1, Nw) @ (Nw, Ny)
+            w_modes_cpx = vw @ Phi_w
+            w_dotdot_modes_cpx = vw @ phi_dotdot_w
         if par.Nalpha > 0:
-            alpha_modes[i, :] = np.real(qa @ Phi_alpha)  # (1, Nalpha) @ (Nalpha, Ny)
+            alpha_modes_cpx = va @ Phi_alpha
+            alpha_dot_modes_cpx = va @ phi_dot_alpha
+
+        # densité d'énergie cinétique par mode
+        Tw[i,:] = 0.5*par.airfoil.m*omega[i]**2*np.abs(w_modes_cpx)**2 # on prend le module et pas la partie réelle car Re() dépend de la phase du vect propre dont provient wi(y)
+        Ta[i,:] = 0.5*par.airfoil.Ialpha_EA*omega[i]**2*np.abs(alpha_modes_cpx)**2 
+        # énergie cinétique totale par mode
+        T_Ew[i,:] = np.trapezoid(Tw[i,:], par.y)
+        T_Ea[i,:] = np.trapezoid(Ta[i,:], par.y)
+        # densité énergie cinétique par mode 
+        T_ew[i,:] = Tw[i,:]/(T_Ew[i,:]+T_Ea[i,:])
+        T_ea[i,:] = Ta[i,:]/(T_Ew[i,:]+T_Ea[i,:])
+
+        Uw[i,:] = 0.5*par.EIx*np.abs(w_dotdot_modes_cpx)**2
+        Ua[i,:] = 0.5*par.GJ*np.abs(alpha_dot_modes_cpx)**2
+        # énergie cinétique totale par mode
+        U_Ew[i,:] = np.trapezoid(Uw[i,:], par.y)
+        U_Ea[i,:] = np.trapezoid(Ua[i,:], par.y)
+        # densité énergie cinétique par mode 
+        U_ew[i,:] = Uw[i,:]/(U_Ew[i,:]+U_Ea[i,:])
+        U_ea[i,:] = Ua[i,:]/(U_Ew[i,:]+U_Ea[i,:])
+
+        w_modes[i, :] = np.real(w_modes_cpx)  # (1, Nw) @ (Nw, Ny)
+        alpha_modes[i, :] = np.real(alpha_modes_cpx)  # (1, Nalpha) @ (Nalpha, Ny)
+
+    energy_dict = {
+    'Tw': Tw,       # densité énergie cinétique brute (w)
+    'Ta': Ta,       # densité énergie cinétique brute (alpha)
+    'Uw': Uw,       # densité énergie élastique brute (w)
+    'Ua': Ua,       # densité énergie élastique brute (alpha)
+    'T_Ew': T_Ew,   # énergie cinétique totale (w)
+    'T_Ea': T_Ea,   # énergie cinétique totale (alpha)
+    'U_Ew': U_Ew,   # énergie élastique totale (w)
+    'U_Ea': U_Ea,   # énergie élastique totale (alpha)
+    'T_ew': T_ew,   # densité énergie cinétique (w)
+    'T_ea': T_ea,   # densité énergie cinétique (alpha)
+    'U_ew': U_ew,   # densité énergie élastique (w)
+    'U_ea': U_ea,   # densité énergie élastique (alpha)
+    }
 
 
+    '''
+    normalize = "per_field" : on prend le max du champ w (resp. a) et on le norm pas son max pour chaque mode
+    normalize = "per_mode"  : on prend le max entre a et w pour un mode et ça nous sert de norm
 
-        '''
-        normalize = "per_field" : on prend le max du champ w (resp. a) et on le norm pas son max pour chaque mode
-        normalize = "per_mode"  : on prend le max entre a et w pour un mode et ça nous sert de norm
+    je pense le mieux c'est de ne pas normaliser comme ça, mais plutôt normaliser a et w par rapport à leur propre energy cinétique,
+    comme ça on peut bien comparer a avec w pour chaque mode, et même entre les modes avec un sharey=True (on leur fait partager le même axe)
+    '''
 
-        je pense le mieux c'est de ne pas normaliser comme ça, mais plutôt normaliser a et w par rapport à leur propre energy cinétique,
-        comme ça on peut bien comparer a avec w pour chaque mode, et même entre les modes
-        '''
-        if normalize=='per_field':
-            
-            if par.Nw > 0:
-                m = np.max(np.abs(w_modes[i, :]))
-                if m > 0:
-                    w_modes[i, :] /= m # on divise chaque champ indépendamment, mode par mode, par son max (en val abs)
-            if par.Nalpha > 0:
-                m = np.max(np.abs(alpha_modes[i, :]))
-                if m > 0:
-                    alpha_modes[i, :] /= m
-        elif normalize =='per_mode':
-            # Facteur commun par mode i, pris sur TOUS les champs présents
-            candidates = []
-            if par.Nw > 0:
-                mw = np.max(np.abs(w_modes[i, :])) if Ny > 0 else 0.0
-                candidates.append(mw)
-            if par.Nalpha > 0:
-                ma = np.max(np.abs(alpha_modes[i, :])) if Ny > 0 else 0.0
-                candidates.append(ma)
-            scale = max(candidates) if candidates else 0.0
-
-            if scale > 0:
-                if par.Nw > 0:
-                    w_modes[i, :] /= scale
-                if par.Nalpha > 0:
-                    alpha_modes[i, :] /= scale
-
-
-    return w_modes, alpha_modes
+    return w_modes, alpha_modes, energy_dict
 
 def modalMatrices(par):
     """
@@ -828,7 +969,7 @@ def TheodoresenAeroModel(par,U,omega):
 
 ''' At rest '''
 
-def ModalParamAtRest(par, normalize='per_mode'):
+def ModalParamAtRest(par):
     """
     Compute natural frequencies (at rest, no aerodynamic coupling).
 
@@ -859,9 +1000,9 @@ def ModalParamAtRest(par, normalize='per_mode'):
     freqs = np.imag(eigvals) / (2 * np.pi)
     zeta = -np.real(eigvals) / np.abs(eigvals) # zeta = -p/sqrt(p²+wn²)
 
-    w_modes, alpha_modes = _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=normalize)
+    w_modes, alpha_modes, energy_dict = _reconstruct_shapes_from_eigvecs(par, eigvals, eigvecs)
 
-    return freqs, zeta, eigvals, eigvecs, w_modes, alpha_modes
+    return freqs, zeta, eigvals, eigvecs, w_modes, alpha_modes, energy_dict
 
 ''' Dynamic '''
 
@@ -905,7 +1046,7 @@ def stateMatrixAero(par,U,omega):
     
     return A
 
-def ModalParamDyn(par, normalize = 'per_mode', tracked_idx=(1,2)):
+def ModalParamDyn(par, tracked_idx, compute_shapes=True, compute_energy=True, track_using = None):
     '''
     Compute the modal parameters of the system for a range of wind speeds.
 
@@ -913,7 +1054,8 @@ def ModalParamDyn(par, normalize = 'per_mode', tracked_idx=(1,2)):
     ---------------
     par : ModelParameters
         Parameters including `U` (array of wind speeds) and structural/aero settings.
-
+    tracked_idx : list
+        the modes that we track
     RETURNS
     ---------------
     f : np.ndarray
@@ -950,7 +1092,16 @@ def ModalParamDyn(par, normalize = 'per_mode', tracked_idx=(1,2)):
     alpha_modes_U = np.zeros((len(U), par.Nq, Ny))
     f_modes_U = np.zeros((len(U), par.Nq))
 
-    for i in range(len(U)):
+    # densité énergie cinétique normalisée car ça dépend de omega² sinon
+    T_ew_U = np.zeros((len(U), par.Nq, Ny))
+    T_ea_U = np.zeros((len(U), par.Nq, Ny))
+
+    # densité énergie élastique
+    U_ew_U = np.zeros((len(U), par.Nq, Ny))
+    U_ea_U = np.zeros((len(U), par.Nq, Ny))
+
+
+    for i in range(len(U)): # i parcourt les différentes vitesses
         prev.append(previous_omega)
         
         A = stateMatrixAero(par,U[i],previous_omega)
@@ -966,12 +1117,17 @@ def ModalParamDyn(par, normalize = 'per_mode', tracked_idx=(1,2)):
         zeta = -np.real(eigvals) / np.abs(eigvals) # = - real(lambda) / abs(lambda) = - real(lambda) / sqrt(real(lambda)^2 + imag(lambda)^2)
 
         '''necessary for the following modes'''
-        w_modes, alpha_modes = _reconstruct_shapes_from_eigvecs(par, eigvecs, normalize=normalize)
-        w_modes_U[i,:,:] = w_modes
-        alpha_modes_U[i,:,:] = alpha_modes
-        f_modes_U[i,:]=f0 #we keep the frenquecies of the Nq modes for each U
-
-        
+        # only if shapes/energy requested
+        if compute_shapes or compute_energy:
+            w_modes, alpha_modes, energy_dict = _reconstruct_shapes_from_eigvecs(par, eigvals, eigvecs, compute_energy=compute_energy)
+            if compute_shapes:
+                w_modes_U[i, :, :] = w_modes
+                alpha_modes_U[i, :, :] = alpha_modes
+            if compute_energy:
+                T_ew_U[i, :, :] = energy_dict['T_ew']
+                T_ea_U[i, :, :] = energy_dict['T_ea']
+                U_ew_U[i, :, :] = energy_dict['U_ew']
+                U_ea_U[i, :, :] = energy_dict['U_ea']
 
         # modes index must be changed when we'll add the v-DOF
         # we only keep the 2nd [1] and 3rd [2] mode (usually it's the 2nd bending mode and 1st torsion mode)
@@ -989,6 +1145,24 @@ def ModalParamDyn(par, normalize = 'per_mode', tracked_idx=(1,2)):
             tracked_idx, MAC = _assign_by_mac(prev_refs, curr_vecs)
             # update references
             prev_refs = [curr_vecs[j] for j in tracked_idx]
+        
+        # mode ID vectors for tracking (either 'field' or None)
+        # field : we use the w_modes and a_modes shapes in the physical space to track the modes
+        # None  : we use the eigvecs vi from A to track the modes
+        if i == 0: # mode à U=0 deviennet notre ref pour la suite
+            if (track_using == 'fields') and compute_shapes:
+                curr_vecs = [_mode_id_vec(w_modes[j, :], alpha_modes[j, :]) for j in range(par.Nq)]
+            else:
+                curr_vecs = [_mode_id_from_eigvec(par, eigvecs[:par.Nq, j]) for j in range(par.Nq)]
+            prev_refs = [curr_vecs[j] for j in tracked_idx]
+        else:
+            # assign by MAC against previous references
+            if (track_using == 'fields') and compute_shapes:
+                curr_vecs = [_mode_id_vec(w_modes[j, :], alpha_modes[j, :]) for j in range(par.Nq)]
+            else:
+                curr_vecs = [_mode_id_from_eigvec(par, eigvecs[:par.Nq, j]) for j in range(par.Nq)]
+            tracked_idx, MAC = _assign_by_mac(prev_refs, curr_vecs)
+            prev_refs = [curr_vecs[j] for j in tracked_idx]
 
         # fill outputs for the tracked modes only
         k_list = tracked_idx
@@ -1001,8 +1175,15 @@ def ModalParamDyn(par, normalize = 'per_mode', tracked_idx=(1,2)):
         previous_omega = float(np.mean(w[list(tracked_idx)]))
         # JE SAIS pas si on doit faire la moyenne de tous les omega pour la freq réduite ou que des modes qui nous intéresse ?
         # previous_omega = 0.5 * (w[k_list[1]] + w[k_list[]])
+    
+    energy_dict_U = {
+        'T_ew_U' : T_ew_U,
+        'T_ea_U' : T_ea_U,
+        'U_ew_U' : U_ew_U,
+        'U_ea_U' : U_ea_U
+    }
 
-    return f, damping , f_modes_U, w_modes_U, alpha_modes_U
+    return f, damping , f_modes_U, w_modes_U, alpha_modes_U, energy_dict_U
 
 ''' Objectives computations'''
 
@@ -1013,6 +1194,12 @@ def damping_crossing_slope(U, damping, return_status=False):
     
     In flutter case we always send the TORSION mode damping(U), 3rd mode of the struc
     when balancement is not considered (so usually 2nd column of damping from ROM evaluation)
+
+    Parameters
+    ----------
+    U : np.array
+        list of the different used U values
+    damping : np.array
     '''
     # damp_2d: shape (nU, n_modes)
     Uc_best = None
@@ -1335,23 +1522,13 @@ def plot_tip_time_and_fft(par, t, X, detrend=True, U=None, window=True, zero_pad
     if not np.allclose(np.diff(t), dt, rtol=1e-3, atol=1e-9):
         raise ValueError("t doit être (quasi) uniformément échantillonné pour la FFT.")
 
-    # Récupération des coordonnées modales depuis X
-    Nv = int(getattr(par, 'Nv', 0))
-    Nw = int(getattr(par, 'Nw', 0))
-    Na = int(getattr(par, 'Nalpha', 0))
-    n_q = X.shape[1] // 2
-    Q = X[:, :n_q]
-
-    i_w0, i_w1 = Nv, Nv + Nw
-    i_a0, i_a1 = i_w1, i_w1 + Na
-    qw_t = Q[:, i_w0:i_w1] if Nw > 0 else np.zeros((nt, 0))
-    qa_t = Q[:, i_a0:i_a1] if Na > 0 else np.zeros((nt, 0))
+    # we get the generalized coordinates from the state vector X(t)
+    qw_t, qa_t = X_to_q(par = par, X=X, t=t)
 
     # Mapping modal -> champs physiques sur l'envergure
     w_map, a_map = _modal_to_physical_fields(par, qw_t, qa_t)  # renvoie w(y,t) alpha(y,t)
+
     # puis on prend les valeurs temporelles en bout d'aile [tip_idx]
-
-
     # Extraction au bout (y=s) = dernier point de par.y
     tip_idx = -1
     w_tip = w_map[:, tip_idx] if w_map.size else np.zeros(nt)

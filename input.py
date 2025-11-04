@@ -71,9 +71,9 @@ class ModelParameters:
         # Discretization parameters
         self._dy = 1/1000                        # Spatial discretization step
         self.y = np.arange(0, s, self._dy)       # Spatial discretization vector
-        self.Nv = 0
-        self.Nw = 3                             # Number of bending modes
-        self.Nalpha = 3                         # Number of torsional modes
+        self._Nv = 0
+        self._Nw = 3                             # Number of bending modes
+        self._Nalpha = 3                         # Number of torsional modes
         self.Nq = self.Nw+self.Nalpha+self.Nv
         self.nDOF = 2
 
@@ -106,7 +106,7 @@ class ModelParameters:
     def _recompute_Nq(self):
         # Cohérent avec le code ROM qui utilise Nq = Nw + Nalpha
         if hasattr(self, "_Nw") and hasattr(self, "_Nalpha"):
-            self.Nq = int(self._Nw) + int(self._Nalpha)
+            self.Nq = int(self._Nv) + int(self._Nw) + int(self._Nalpha)
 
     def _recompute_U(self):
         if hasattr(self, "_Umax") and hasattr(self, "_steps"):
@@ -144,6 +144,16 @@ class ModelParameters:
     def dy(self, value: float) -> None:
         self._dy = float(value)
         self._recompute_y()
+
+    # --- Nv ---
+    @property
+    def Nv(self) -> int:
+        return self._Nv
+
+    @Nv.setter
+    def Nv(self, value: int) -> None:
+        self._Nv = int(value)
+        self._recompute_Nq()
 
     # --- Nw ---
     @property
