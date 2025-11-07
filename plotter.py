@@ -6,64 +6,72 @@ from matplotlib import animation
 
 from data_manager import _load_npz
 from typing import Tuple, Optional 
+import ROM
 
-def plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz'):
+def plot_modal_data_single(f,
+                           damping,
+                           par=None,
+                           U: Optional[np.ndarray] = None,
+                           suptitle: Optional[str] = None):
     """
-    Trace un seul jeu de données (fréquences et amortissements) avec un style fixé.
+    Trace un seul jeu de données (fréquences et amortissements) à partir des tableaux passés.
 
-    Règles :
-    - Theodorsen : ligne pleine
-    - QuasiSteady : ligne pointillée
-    - 1ère colonne (mode 1) : bleu ('T1')
-    - 2ème colonne (mode 2) : rouge ('B2')
-    - Légende unique sur le subplot d'amortissement : '<mode> - <modèle>'
+    Entrées
+    - f: (nU,) ou (nU, n_modes) fréquences en Hz
+    - damping: (nU,) ou (nU, n_modes) amortissements zeta
+    - par: ModelParameters optionnel (utilisé pour U et le style du modèle)
+    - U: optionnel si par n'est pas fourni
+    - suptitle: titre global de la figure
     """
-    # Chargement
-    D = _load_npz(npz_path)
-    U, f, z, p = D['U'], D['f'], D['damping'], D['params']
+    f = np.asarray(f)
+    z = np.asarray(damping)
 
-    # Nom du modèle & style
-    # Robust to params saved with private name '_model_aero'
-    name = str(p.get('model_aero', p.get('_model_aero', 'Theodorsen'))).lower()
-    model_name = 'Theodorsen' if name.startswith('theod') else 'QuasiSteady'
+    if U is None:
+        if par is None or not hasattr(par, 'U'):
+            raise ValueError("Provide U or a ModelParameters 'par' with U.")
+        U = par.U
+    U = np.asarray(U).ravel()
+
+    # Style selon le modèle (si dispo)
+    if par is not None and hasattr(par, 'model_aero'):
+        model_name = 'Theodorsen' if str(par.model_aero).lower().startswith('theod') else 'QuasiSteady'
+    else:
+        model_name = 'Theodorsen'
     linestyle = '-' if model_name == 'Theodorsen' else '--'
 
-    # Nombre de modes (colonnes)
-    n_modes = int(f.shape[1]) if (hasattr(f, 'ndim') and f.ndim == 2) else 1
+    # Harmoniser dimensions à 2D
+    if f.ndim == 1:
+        f = f.reshape(-1, 1)
+    if z.ndim == 1:
+        z = z.reshape(-1, 1)
+    if f.shape[0] != U.size or z.shape[0] != U.size:
+        raise ValueError("First dimension of f/damping must match len(U).")
 
-    # Couleurs et labels par mode (génériques)
-    # Utilise le cycle de couleurs matplotlib si disponible
+    n_modes = f.shape[1]
+
+    # Couleurs et labels par mode
     try:
         base_colors = plt.rcParams['axes.prop_cycle'].by_key().get('color', [])
     except Exception:
         base_colors = []
-    if len(base_colors) < n_modes:
-        colors = [f"C{i}" for i in range(n_modes)]
-    else:
-        colors = base_colors[:n_modes]
+    colors = base_colors[:n_modes] if len(base_colors) >= n_modes else [f"C{i}" for i in range(n_modes)]
     mode_labels = [f"Mode {j+1}" for j in range(n_modes)]
 
     # Figure
     fig, ax = plt.subplots(2, 1, sharex=True, constrained_layout=True)
-    fig.suptitle(npz_path)
+    title = suptitle if suptitle is not None else model_name
+    fig.suptitle(title)
 
     # Fréquences
-    if n_modes == 1 and (not hasattr(f, 'ndim') or f.ndim == 1):
-        if not np.all(np.isnan(f)):
-            ax[0].plot(U, f, color=colors[0], linestyle=linestyle, lw=1.2)
-    else:
-        for j in range(n_modes):
-            if not np.all(np.isnan(f[:, j])):
-                ax[0].plot(U, f[:, j], color=colors[j], linestyle=linestyle, lw=1.2)
+    for j in range(n_modes):
+        if not np.all(np.isnan(f[:, j])):
+            ax[0].plot(U, f[:, j], color=colors[j], linestyle=linestyle, lw=1.2)
     ax[0].set_ylabel('f [Hz]')
     ax[0].grid(True, linewidth=0.3, alpha=0.5)
 
     # Amortissement + légende
-    if n_modes == 1 and (not hasattr(z, 'ndim') or z.ndim == 1):
-        ax[1].plot(U, z, color=colors[0], linestyle=linestyle, lw=1.2, label=mode_labels[0])
-    else:
-        for j in range(n_modes):
-            ax[1].plot(U, z[:, j], color=colors[j], linestyle=linestyle, lw=1.2, label=mode_labels[j])
+    for j in range(n_modes):
+        ax[1].plot(U, z[:, j], color=colors[j], linestyle=linestyle, lw=1.2, label=mode_labels[j])
 
     ax[1].set_xlabel('U [m/s]')
     ax[1].set_ylabel('zeta [-]')
@@ -71,66 +79,86 @@ def plot_modal_data_single(npz_path='data/model_params_Theodorsen.npz'):
     ax[1].legend(frameon=False, ncols=min(4, n_modes))
     plt.show()
 
-def plot_modal_data_two(npz_path_a,
-                        npz_path_b):
+def plot_modal_data_two(fa,
+                        za,
+                        fb,
+                        zb,
+                        par_a=None,
+                        par_b=None,
+                        U: Optional[np.ndarray] = None,
+                        labels: Optional[Tuple[str, str]] = None):
     """
-    
-    Plot two simulations together with fixed styling.
+    Superpose deux simulations (fa, za) et (fb, zb).
 
-    Rules:
-    - Theodorsen: solid line
-    - QuasiSteady: dashed line
-    - First column (mode 1): blue ('T1')
-    - Second column (mode 2): red ('B2')
-    - Single legend on the damping subplot combining mode and model info
+    - fa, fb: (nU,) ou (nU, n_modes)
+    - za, zb: (nU,) ou (nU, n_modes)
+    - par_a, par_b: ModelParameters optionnels pour style et/ou U
+    - U: optionnel si non fourni via par_a/par_b
+    - labels: labels pour la légende, sinon model_aero utilisé si dispo
     """
-    # Load both datasets
-    A = _load_npz(npz_path_a)
-    B = _load_npz(npz_path_b)
+    fa = np.asarray(fa)
+    fb = np.asarray(fb)
+    za = np.asarray(za)
+    zb = np.asarray(zb)
 
-    Ua, fa, za, pa = A['U'], A['f'], A['damping'], A['params']
-    Ub, fb, zb, pb = B['U'], B['f'], B['damping'], B['params']
+    # Récupérer U
+    if U is None:
+        U_candidates = []
+        if par_a is not None and hasattr(par_a, 'U'):
+            U_candidates.append(np.asarray(par_a.U).ravel())
+        if par_b is not None and hasattr(par_b, 'U'):
+            U_candidates.append(np.asarray(par_b.U).ravel())
+        if len(U_candidates) == 0:
+            raise ValueError("Provide U or ModelParameters par_a/par_b with U.")
+        U = U_candidates[0]
+        for Uc in U_candidates[1:]:
+            if Uc.shape != U.shape or not np.allclose(Uc, U):
+                raise ValueError("U arrays differ between par_a and par_b; cannot plot on same x-axis.")
+    U = np.asarray(U).ravel()
 
-    U = Ua  # assuming Ua and Ub are the same
+    # Harmoniser dimensions à 2D
+    def to_2d(a):
+        return a.reshape(-1, 1) if a.ndim == 1 else a
+    fa, fb, za, zb = map(to_2d, (fa, fb, za, zb))
 
+    # Tailles et cohérences
+    if fa.shape[0] != U.size or fb.shape[0] != U.size or za.shape[0] != U.size or zb.shape[0] != U.size:
+        raise ValueError("First dimension of fa/fb/za/zb must match len(U).")
 
-    style_a = '-'
-    style_b = '--'
+    n_modes = min(fa.shape[1], fb.shape[1], za.shape[1], zb.shape[1])
 
-    # Ensure arrays have up to 2 columns (T1, B2). If only 1, pad with NaN.
-    # def take_two(arr: np.ndarray) -> np.ndarray:
-    #     if arr.ndim == 1:
-    #         return np.column_stack([arr, np.full_like(arr, np.nan)])
-    #     if arr.shape[1] == 1:
-    #         return np.column_stack([arr[:, 0], np.full(arr.shape[0], np.nan)])
-    #     return arr[:, :2]
+    # Styles par modèle
+    def model_and_style(par):
+        if par is not None and hasattr(par, 'model_aero'):
+            name = 'Theodorsen' if str(par.model_aero).lower().startswith('theod') else 'QuasiSteady'
+        else:
+            name = None
+        style = '-' if (name or 'Theodorsen') == 'Theodorsen' else '--'
+        return name, style
 
-    # fa2, fb2 = take_two(fa), take_two(fb)
-    # za2, zb2 = take_two(za), take_two(zb)
+    name_a, style_a = model_and_style(par_a)
+    name_b, style_b = model_and_style(par_b)
 
-    #------ Fixed colors and labels per mode---
-    colors = ['blue', 'red']  # 0 -> T1, 1 -> B2
-    # mode_labels = ['B2', 'T1']
-    mode_labels = ['B2', 'T1']
-    #------------------------------------------
+    la = labels[0] if labels else (name_a or 'A')
+    lb = labels[1] if labels else (name_b or 'B')
 
-    # Create figure with shared x-axis
+    # Couleurs et labels par mode
+    colors = ['blue', 'red', 'C2', 'C3', 'C4', 'C5']
+    mode_labels = [f"Mode {j+1}" for j in range(n_modes)]
+
     fig, ax = plt.subplots(2, 1, sharex=True, constrained_layout=True)
 
-    # Top subplot: frequencies
-    for j in (0, 1):
-        ax[0].plot(U, fa[:, j], color=colors[j], linestyle=style_a, lw=1.2) #lw for line width
-        ax[0].plot(U, fb[:, j], color=colors[j], linestyle=style_b, lw=1.2)
+    # Fréquences
+    for j in range(n_modes):
+        ax[0].plot(U, fa[:, j], color=colors[j % len(colors)], linestyle=style_a, lw=1.2)
+        ax[0].plot(U, fb[:, j], color=colors[j % len(colors)], linestyle=style_b, lw=1.2)
     ax[0].set_ylabel('f [Hz]')
-    ax[0].grid(True, linewidth=0.3, alpha=0.5) #alpha for transparency
+    ax[0].grid(True, linewidth=0.3, alpha=0.5)
 
-    # Bottom subplot: damping + legend here
-    for j in (0, 1):
-
-        # labels += [f"{mode_labels[j]} - {model_a}", f"{mode_labels[j]} - {model_b}"]
-
-        ax[1].plot(U, za[:, j], color=colors[j], linestyle=style_a, lw=1.2, label = mode_labels[j] +' '+ npz_path_a.rsplit('_',1)[-1])
-        ax[1].plot(U, zb[:, j], color=colors[j], linestyle=style_b, lw=1.2, label = mode_labels[j] +' '+ npz_path_b.rsplit('_',1)[-1])
+    # Amortissements + légende
+    for j in range(n_modes):
+        ax[1].plot(U, za[:, j], color=colors[j % len(colors)], linestyle=style_a, lw=1.2, label=f"{mode_labels[j]} - {la}")
+        ax[1].plot(U, zb[:, j], color=colors[j % len(colors)], linestyle=style_b, lw=1.2, label=f"{mode_labels[j]} - {lb}")
 
     ax[1].set_xlabel('U [m/s]')
     ax[1].set_ylabel('zeta [-]')
@@ -139,40 +167,47 @@ def plot_modal_data_two(npz_path_a,
 
     plt.show()
 
-def plot_params_table(npz_path: str):
-    """
-    Load a .npz file (via _load_npz) and display its parameters as a table.
+def plot_params_table(par):
+    # Construire un dict lisible des principaux paramètres
+    items = [
+        ("model_aero", par.model_aero),
+        ("s", par.s),
+        ("c", par.airfoil.c),
+        ("x_ea", par.airfoil.x_ea),
+        ("x_cg", par.airfoil.x_cg),
+        ("m", par.airfoil.m),
+        ("EIx", par.EIx),
+        ("GJ", par.GJ),
+        ("eta_w", par.eta_w),
+        ("eta_alpha", par.eta_alpha),
+        ("Mt", par.Mt),
+        ("I_alpha_t", par.I_alpha_t),
+        ("x_t", par.x_t),
+        ("Nw", par.Nw),
+        ("Nalpha", par.Nalpha),
+        ("Umax", par.Umax),
+        ("steps", par.steps),
+    ]
+    # Filtrer None
+    table_data = [[k, str(v)] for k, v in items if v is not None]
 
-    Each parameter name and value is shown in a simple matplotlib table.
-    """
-    # Load file using your existing loader
-    data = _load_npz(npz_path)
-    params = data['params']
-
-    if not params:
-        print("No parameters found in this file.")
+    if not table_data:
+        print("No parameters found to display.")
         return
 
-    # Convert to 2D list of [key, value] for the table
-    table_data = [[k, str(v)] for k, v in params.items()]
+    fig, ax = plt.subplots(figsize=(6, len(table_data)*0.4 + 1))
+    ax.axis('off')
 
-    # --- Create figure ---
-    fig, ax = plt.subplots(figsize=(6, len(params)*0.4 + 1))
-    ax.axis('off')  # no axes, just the table
-
-    # Create the table
     table = ax.table(
         cellText=table_data,
         colLabels=["Parameter", "Value"],
         loc='center',
         cellLoc='left'
     )
-
-    # Style adjustments
     table.auto_set_font_size(False)
     table.set_fontsize(9)
-    table.scale(1.2, 1.2)  # slightly bigger cells
-    ax.set_title(f"Parameters from {npz_path}", fontsize=11, pad=10)
+    table.scale(1.2, 1.2)
+    ax.set_title("Model Parameters", fontsize=11, pad=10)
 
     plt.tight_layout()
     plt.show()
@@ -268,8 +303,8 @@ def plot_vi(vi: np.ndarray,
     else:
         return ax
 
-
-def plot_vi_grid(Vq: np.ndarray,Nw: int,Nalpha: int,
+def plot_vi_grid(Vq: np.ndarray, Nw: int, Nalpha: int,
+                 mode_indices=None,
                  freqs_hz: Optional[np.ndarray] = None,
                  kind: str = 'abs',              # 'abs' | 'real_imag'
                  normalize: Optional[str] = 'l2',# None | 'max' | 'l2' (per mode)
@@ -283,7 +318,14 @@ def plot_vi_grid(Vq: np.ndarray,Nw: int,Nalpha: int,
 ):
     Vq = np.asarray(Vq)
     assert Vq.shape[0] == Nw + Nalpha, "Vq must have Nw+Nalpha rows"
-    n_modes = Vq.shape[1]
+
+    # Determine modes to display (accept 0-based or 1-based)
+    n_modes_total = Vq.shape[1]
+    if mode_indices is None:
+        sel_modes = list(range(n_modes_total))
+    else:
+        sel_modes = list(mode_indices)
+    n_modes = len(sel_modes)
 
     if figsize is None:
         figsize = (max(5.0, 3.0 * n_modes), 3.2)
@@ -292,10 +334,10 @@ def plot_vi_grid(Vq: np.ndarray,Nw: int,Nalpha: int,
     if n_modes == 1:
         axes = np.array([axes])
 
-    for i in range(n_modes):
+    for i, jm in enumerate(sel_modes):
         ax = axes[i]
         plot_vi(
-            vi=Vq[:, i],
+            vi=Vq[:, jm],
             Nw=Nw, Nalpha=Nalpha,
             kind=kind,
             normalize=normalize,
@@ -304,9 +346,9 @@ def plot_vi_grid(Vq: np.ndarray,Nw: int,Nalpha: int,
             torsion_label=torsion_label,
             ax=ax,  # reuse single-axis variant
         )
-        title = f"Mode {i+1}"
+        title = f"Mode {jm+1}"
         if freqs_hz is not None:
-            title += f" (f={float(freqs_hz[i]):.2f} Hz)"
+            title += f" (f={float(freqs_hz[jm]):.2f} Hz)"
         ax.set_title(title)
 
         if i == n_modes - 1:
@@ -315,6 +357,114 @@ def plot_vi_grid(Vq: np.ndarray,Nw: int,Nalpha: int,
     if suptitle:
         fig.suptitle(suptitle, y=1.02)
     plt.tight_layout()
+    if show:
+        plt.show()
+    return fig, axes
+
+def plot_vi_grid_over_U(U: np.ndarray,Vq_U: np.ndarray,
+                        Nw: int,Nalpha: int,
+                        mode_indices=None,n_samples: int = 10,
+                        kind: str = 'abs', # 'abs' | 'real_imag' (mag_phase not supported here)
+                        normalize = None, # None | 'max' | 'l2'
+                        align_phase = False,
+                        f_modes_U= None,
+                        sharey=True,
+                        figsize = None,suptitle= None,show=True,
+                        bending_label = 'vw (bending)',
+                        torsion_label = 'va (torsion)',
+):
+    U = np.asarray(U).ravel()
+    assert U.ndim == 1 and U.size > 0, "U must be 1D with at least one entry"
+
+    Vq_U = np.asarray(Vq_U)
+    Nq = Nw + Nalpha
+    assert Vq_U.ndim == 3, "Vq_U must be 3D (nU, ?, n_modes)"
+
+    # Accept either Vq_U shape (nU, Nq, Nq) or eigvecs_U shape (nU, 2*Nq, Nq)
+    if Vq_U.shape[1] == Nq:
+        Vq_only = Vq_U
+    elif Vq_U.shape[1] == 2 * Nq:
+        Vq_only = Vq_U[:, :Nq, :]
+    else:
+        raise ValueError("Vq_U second dim must be Nq or 2*Nq")
+
+    nU, _, n_modes_total = Vq_only.shape
+    assert nU == U.size, "len(U) must match Vq_U.shape[0]"
+
+    # Determine modes to display (accept 1-based)
+    if mode_indices is None:
+        sel_modes = list(range(n_modes_total))
+    else:
+        sel_modes = list(mode_indices)
+        if len(sel_modes) > 0 and min(sel_modes) >= 1 and max(sel_modes) <= n_modes_total:
+            sel_modes = [m - 1 for m in sel_modes]  # convert to 0-based
+
+    # Choose U samples
+    n_rows = min(int(n_samples), nU)
+    if n_rows <= 1:
+        row_idx = [0]
+    else:
+        row_idx = np.unique(np.linspace(0, nU - 1, n_rows).astype(int)).tolist()
+        n_rows = len(row_idx)
+
+    n_cols = len(sel_modes)
+    if n_cols == 0:
+        raise ValueError("No modes selected to plot")
+
+    if kind == 'mag_phase':
+        raise ValueError("kind='mag_phase' not supported in grid; use plot_vi for a single U")
+
+    if figsize is None:
+        figsize = (max(5.0, 3.0 * n_cols), max(2.6, 2.6 * n_rows))
+
+    fig, axes = plt.subplots(n_rows, n_cols, sharey=sharey, figsize=figsize, constrained_layout=True)
+    if n_rows == 1 and n_cols == 1:
+        axes = np.array([[axes]])
+    elif n_rows == 1:
+        axes = axes.reshape(1, -1)
+    elif n_cols == 1:
+        axes = axes.reshape(-1, 1)
+
+    for r, iu in enumerate(row_idx):
+        for c, jm in enumerate(sel_modes):
+            ax = axes[r, c]
+            vi = Vq_only[iu, :, jm]
+            plot_vi(
+                vi=vi,
+                Nw=Nw, Nalpha=Nalpha,
+                kind=kind,
+                normalize=normalize,
+                align_phase=align_phase,
+                bending_label=bending_label,
+                torsion_label=torsion_label,
+                ax=ax
+            )
+            # Titles and labels
+            if r == 0:
+                ax.set_title(f"Mode {jm+1}")
+            else:
+                ax.set_title("")
+            # Annotate frequency inside subplot (consistent with plot_mode_shapes_grid_over_U)
+            if f_modes_U is not None:
+                try:
+                    fval = float(f_modes_U[iu, jm])
+                    if np.isfinite(fval):
+                        ax.text(
+                            0.98, 0.06, f"f = {fval:.2f} Hz",
+                            transform=ax.transAxes,
+                            ha='right', va='bottom', fontsize=9, color='0.35'
+                        )
+                except Exception:
+                    pass
+            if c == 0:
+                ax.set_ylabel(f"U={U[iu]:.2f} m/s")
+            # X-ticks only on bottom row
+            if r < n_rows - 1:
+                ax.set_xticklabels([])
+
+    if suptitle:
+        fig.suptitle(suptitle)
+
     if show:
         plt.show()
     return fig, axes
@@ -440,7 +590,7 @@ def plot_mode_shapes_grid(y, freqs_hz, W=None, ALPHA=None,extras=None,normalize=
 
     return fig, axes
 
-def plot_mode_shapes_over_U_grid(y, U, WU=None, ALPHAU=None, f_modes_U=None,
+def plot_mode_shapes_grid_over_U(y, U, WU=None, ALPHAU=None, f_modes_U=None,
                                  mode_indices=None, n_samples=10,
                                  colors=None, styles=None,
                                  sharey=True, figsize=None,

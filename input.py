@@ -87,8 +87,8 @@ class ModelParameters:
         self.dCm = 0.5                         # Moment coefficient
         # actually the dCm shoudn't be constant, in the stall region the curve is not linear anymore
 
-        self._Umax = 40                          # Maximum velocity of the IAT wind tunnel
-        self._steps = 80                        # Number of velocity steps
+        self._Umax = 30                          # Maximum velocity of the IAT wind tunnel
+        self._steps = 120                        # Number of velocity steps
         self.U = np.linspace(0.1, self._Umax, self._steps)
 
         if model_aero not in ['Theodorsen', 'QuasiSteady']:

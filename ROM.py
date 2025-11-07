@@ -74,7 +74,7 @@ def _mode_id_from_eigvec(par, vi):
     vw = vi[:par.Nw]
     va = vi[par.Nw:par.Nq]
     x = np.concatenate([np.abs(vw), np.abs(va)]).astype(float)
-    n = np.linalg.norm(x) or 1.0
+    n = np.linalg.norm(x) or 1.0 #we might want to test without normalization 
     return x / n
 
 def _mac(a, b, eps=1e-16):
@@ -1094,7 +1094,7 @@ def ModalParamDyn(par, tracked_idx=(0,1,2,3), compute_shapes=True, compute_energ
     
     w_modes_U = np.zeros((len(U), par.Nq, Ny))
     alpha_modes_U = np.zeros((len(U), par.Nq, Ny))
-    f_modes_U = np.zeros((len(U), par.Nq))
+    f_modes_U = np.zeros((len(U), par.Nq)) # not the same as f, this is the frequency of each mode at each U, not only the tracked ones
 
     # densité énergie cinétique normalisée car ça dépend de omega² sinon
     T_ew_U = np.zeros((len(U), par.Nq, Ny))
@@ -1104,6 +1104,11 @@ def ModalParamDyn(par, tracked_idx=(0,1,2,3), compute_shapes=True, compute_energ
     U_ew_U = np.zeros((len(U), par.Nq, Ny))
     U_ea_U = np.zeros((len(U), par.Nq, Ny))
 
+    # Stocke les vecteurs propres complexes sans perte de la partie imaginaire
+    eigvecs_U = np.zeros((len(U), 2*par.Nq, par.Nq), dtype=complex)  # matrice pour stocker les vecteurs propres de A
+
+    if (track_using == 'fields'):
+        compute_shapes = True  # we need shapes to track using fields
 
     for i in range(len(U)): # i parcourt les différentes vitesses
         prev.append(previous_omega)
@@ -1115,8 +1120,19 @@ def ModalParamDyn(par, tracked_idx=(0,1,2,3), compute_shapes=True, compute_energ
         '''
         
         eigvals, eigvecs = _eigs_sorted_positive_imag(A)
+        
+
         w = np.imag(eigvals)
         f0 = w/(2*np.pi)
+
+        eigvecs_U[i,:,:] = eigvecs
+        f_modes_U[i, :] = f0
+        '''
+        actually, we must reorder the modes to keep tracking the same modes even in this eigvecs_U and f_modes_U matrices
+        it works to keep the brut order if the modes don't cross, but when they cross it fails
+        the tracking with MAC must be implemented for all the modes and not only for the followed ones
+        '''
+
         p = np.real(eigvals)
         zeta = -np.real(eigvals) / np.abs(eigvals) # = - real(lambda) / abs(lambda) = - real(lambda) / sqrt(real(lambda)^2 + imag(lambda)^2)
 
@@ -1173,11 +1189,11 @@ def ModalParamDyn(par, tracked_idx=(0,1,2,3), compute_shapes=True, compute_energ
         'U_ea_U' : U_ea_U
     }
 
-    return f, damping , f_modes_U, w_modes_U, alpha_modes_U, energy_dict_U
+    return f, damping , eigvecs_U, f_modes_U, w_modes_U, alpha_modes_U, energy_dict_U
 
 ''' Objectives computations'''
 
-def damping_crossing_slope(U, damping, return_status=False):
+def obj_evaluation(U, damping, return_status=False):
     '''
     Function to evaluate when the damping (of the Torsion mode) crosses 0,
     we also evaluate the slope when it crosses (if it crosses, otherwise near it)
@@ -1220,23 +1236,51 @@ def damping_crossing_slope(U, damping, return_status=False):
 
         Uc_best = U[j]
         slope_cross = s[j]
+        status = 'cross'
+    else:  # if the damping doesn't cross 0
+        # Require at least two consecutive negative slope steps to allow extrapolation
+        # it avoids the problem when the MAC tracking messes up the damping curve and we have some isolated negative slopes (specially at low U)
+        def at_least_k_consecutive_true(mask: np.ndarray, k: int) -> np.ndarray:
+            # renvoie les indices de départ des séquences de True d'au moins k
+            if k <= 1:
+                return np.where(mask)[0]
+            starts = mask.copy()
+            for shift in range(1, k):
+                starts = starts[:-1] & mask[shift:]
+                mask = mask  # (juste pour clarté, pas nécessaire)
+            return np.where(starts)[0]
+        k = 3
+        neg = s < 0.0
+        starts_k = at_least_k_consecutive_true(neg, k)
+        if starts_k.size > 0:
+            # candidate indices are the union of starts and starts+1
+            cand_idx = np.unique(np.concatenate([starts_k + t for t in range(k)]))
 
-        return (Uc_best, slope_cross, 'cross') if return_status else (Uc_best, slope_cross)
-    else :  # if the damping doesn't cross 0
-        
-        neg_idx = np.where(s < 0)[0]
-        if neg_idx.size > 0:
-            #we take the lowest slopes among the negative ones
-            j = neg_idx[np.argmin(s[neg_idx])]
-            Uc_hat = U[j] - d[j] / s[j]
-            slope = s[j]
-            return (Uc_hat, slope, 'extrapolated') if return_status else (Uc_hat, slope)
-        
+            # pick the most negative slope among candidates
+            j = cand_idx[np.argmin(s[cand_idx])]
+            
+            if U[j] > 8 : # to extrapolate only for realistic Uc
+                Uc_hat = U[j] - d[j] / s[j]
+                Uc_best = Uc_hat
+                slope_cross = s[j]
+                status = 'extrapolated'
+            else :
+                # unrealistic extrapolated Uc : censor
+                Uc_best = 70
+                slope_cross = 0.0
+                status = 'censored'
+            
+        else:
+            # not enough evidence (no 2 consecutive negative slopes): censor
+            Uc_best = 70
+            slope_cross = 0.0
+            status = 'censored'
 
-        else: # if we don't have negative slopes
-            slope = 0 # we put a default value if it doesn't cross and only >0
-            Uc = 70
-            return (Uc, slope, 'censored') if return_status else (Uc, slope)
+
+    if return_status:
+        return Uc_best, slope_cross, status
+    else:
+        return Uc_best, slope_cross
 
 
 ''' Temporal resolutions '''

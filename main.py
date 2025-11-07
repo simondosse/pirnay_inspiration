@@ -1,6 +1,7 @@
 #%%
 ''' Import the necessary libraries '''
 import os
+from pyexpat import model
 import numpy as np
 import matplotlib.pyplot as plt
 from input import ModelParameters
@@ -50,21 +51,21 @@ else:
     I_alpha_t = None
     x_t = None
 
-#%%_________________________________________________
+#%%_________________CAS MAXIME________________________________
 
 s=1.5
 
+
 model_cross = ModelParameters(s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha, Mt, I_alpha_t, x_t, model_aero='Theodorsen')
-model_cross.Umax=28
-f, damping, *_ = ROM.ModalParamDyn(model_cross, tracked_idx=(1,2), track_using='field')
-save_modal_data(f = f, damping = damping, model_params=model_cross,out_dir='data', filename='model_cross.npz')
-plotter.plot_modal_data_single(npz_path='data/model_cross.npz' )
+model_cross.Umax=35
+f, damping, *_ = ROM.ModalParamDyn(model_cross, tracked_idx=(0,1,2), track_using=None)
+plotter.plot_modal_data_single(f,damping,model_cross, suptitle='Modal data for cross-validation model')
 
 
 
 #%%___________________________________________RESOLUTION TEMPORELLE____________________________________
 
-algo_name = 'DE'
+algo_name = 'GA'
 data = np.load(f'data/res_{algo_name}.npz')
 X_opt = map_to_physical(data['resX'])
 x_ea = X_opt[0]*c
@@ -73,27 +74,33 @@ x_cg = X_opt[1]*c
 # x_cg = 0.075
 EIx = X_opt[2]
 GJ = X_opt[3]
+x_ea = 0.05
+x_cg = 0.12
+EIx = 447
+GJ = 41
 model_opt = ModelParameters(s=s, c=c, x_ea=x_ea, x_cg=x_cg, m=m, EIx=EIx, GJ=GJ, eta_w=eta_w, eta_alpha=eta_alpha,model_aero='Theodorsen')
 model_opt.Umax = 25
-model_opt.Nw=3
+
 model_opt.airfoil.plot_naca00xx_section()
 
 f0, zeta0, eigvals0, eigvecs0, w_modes, alpha_modes, energy_dict = ROM.ModalParamAtRest(model_opt) # normalize = 'per_field' or 'per_mode'
 Vq = eigvecs0[:model_opt.Nq, :]
 
 plotter.plot_mode_shapes_grid(y=model_opt.y, freqs_hz=f0, W=energy_dict['T_ew'], ALPHA=energy_dict['T_ea'], sharey=True, suptitle='Structural mode shape contribution - U=0')
-plotter.plot_vi_grid(Vq=Vq, Nw=model_opt.Nw, Nalpha=model_opt.Nalpha, freqs_hz=f0, kind='abs', normalize='l2', sharey=True, suptitle='Modal coefficients per mode')
+plotter.plot_mode_shapes_grid(y=model_opt.y, freqs_hz=f0, W=energy_dict['U_ew'], ALPHA=energy_dict['U_ea'], sharey=True, suptitle='Structural mode shape contribution - U=0')
+
+plotter.plot_mode_shapes_grid(y=model_opt.y, freqs_hz=f0, W=w_modes, ALPHA=alpha_modes, sharey=True, suptitle='Structural mode shape contribution - U=0')
+
+plotter.plot_vi_grid(Vq=Vq, Nw=model_opt.Nw, Nalpha=model_opt.Nalpha, freqs_hz=f0, kind='abs', normalize=None, sharey=True, suptitle='Modal coefficients per mode')
 
 
 
-# for i in range(model_opt.Nq):
-#     plotter.plot_vi(vi = Vq[:,i], Nw = model_opt.Nw, Nalpha = model_opt.Nalpha)
+#%% 
+f, damping, eigvecs_U, f_modes_U, w_modes_U, alpha_modes_U, energy_dict_U = ROM.ModalParamDyn(model_opt,tracked_idx=(0,1,2,3))
+Vq_U = eigvecs_U[:,:model_opt.Nq, :]
+plotter.plot_modal_data_single(f,damping,model_opt, suptitle='Modal data for optimized model')
 
-
-#%%
-f, damping, f_modes_U, w_modes_U, alpha_modes_U, energy_dict_U = ROM.ModalParamDyn(model_opt,tracked_idx=(0,1,2,3))
-save_modal_data(f = f, damping = damping, model_params=model_opt,out_dir='data', filename='model_optim.npz')
-plotter.plot_modal_data_single(npz_path='data/model_optim.npz' )
+Uc, *_ = ROM.obj_evaluation(U = model_opt.U, damping = damping[:,1])
 #%%
 # %matplotlib widget
 t0 = 0
@@ -121,7 +128,15 @@ t,X,A = ROM.integrate_state_rk(par = model_opt, U = U , t=t, x0 = X0, rk_order=4
 ROM.plot_w_alpha_fields(par = model_opt, t=t, X=X,U=U,times_to_plot = np.linspace(t[0],t[-1],10))
 ROM.plot_tip_time_and_fft(par = model_opt, t=t,X=X, U=U, detrend=True)
 
-plotter.plot_mode_shapes_over_U_grid(y=model_opt.y,U=model_opt.U,
+plotter.plot_vi_grid_over_U(U=model_opt.U,
+                            Vq_U=Vq_U,
+                            Nw=model_opt.Nw,
+                            Nalpha=model_opt.Nalpha,
+                            f_modes_U=f_modes_U,
+                            normalize = 'l2',
+                            mode_indices=(0,1,2))
+
+plotter.plot_mode_shapes_grid_over_U(y=model_opt.y,U=model_opt.U,
                                     # WU=w_modes_U, # shape (nU, n_modes, Ny), déjà normalisé si souhaité
                                     WU = energy_dict_U['T_ew_U'],
                                     # ALPHAU=alpha_modes_U, # idem

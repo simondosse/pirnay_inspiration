@@ -1,4 +1,5 @@
 #%%
+from turtle import mode
 import numpy as np
 import NACA
 import ROM
@@ -24,12 +25,14 @@ from pymoo.optimize import minimize
 from ProblemOptim import ProblemOptim
 #%%
 ##########################################################################
-coeff_low, coeff_high = 0.6, 1.4
+coeff_low, coeff_high = 0.7, 1.3  # 70% to 130% of the initial stiffness values (values of the experimental optimal configuration found in Maxime exp at IAT)
 para_interval = np.array([
     [0.0, 1.0],                             # u x_ea/c [0.15,0.5]
     [0.0, 1.0],                             # v facteur d'écart du CG à 0.8c
-    [coeff_low * 366, coeff_high * 366],
-    [coeff_low * 78, coeff_high * 78]
+    # the boudaries of x_ea and x_cg are managed in the map_to_physical function
+
+    [350, 500],                         # EIx [Nm²]
+    [40, 70]                            # GJ [Nm²]
 ])
 
 xl = para_interval[:,0]
@@ -44,7 +47,7 @@ problem_optim_NACA  = ProblemOptim(n_var = para_interval.shape[0], n_obj = n_obj
 )
 
 algorithm_GA = GA(
-        pop_size=20,
+        pop_size=10,
         sampling=LHS(),
         eliminate_duplicates=True,
         crossover=SBX(prob=0.9, eta=20),
@@ -101,8 +104,17 @@ algorithm_CMAES = CMAES(
 ) #sigma et restarts sont spécifiques à CMAES
 
 
+algorithms = {
+    "GA": algorithm_GA,
+    "DE": algorithm_DE,
+    "CMAES": algorithm_CMAES
+}
 
-
+termination = DefaultSingleObjectiveTermination(
+    ftol=1e-3,   # tolérance sur la variation de F
+    period=4,   # nb de générations consécutives à vérifier
+    n_max_gen=5  # sécurité : limite dure si jamais ça n'a pas convergé
+)
 
 #%%______MINIZATION______________________________________________________________________________
 
@@ -116,20 +128,18 @@ termination = DefaultSingleObjectiveTermination(
 )
 '''
 
-algorithms = {
-    "GA": algorithm_GA,
-    "DE": algorithm_DE,
-    "CMAES": algorithm_CMAES
-}
+
 
 algorithm_name = "GA"  
 algorithm = algorithms[algorithm_name]
 
 
+
 res = minimize(
                 problem_optim_NACA, # herite forcement de la classe Problem et doit présenter une fonction _evaluate() bien définie
                 algorithm,       #objet algo optim, il définit le type d'algo d'optim utilisé
-                ('n_gen', 20),       # terminaison : critère d'arrêt pour l'algo, ici on fait n génération et on s'arrête
+                # ('n_gen', 10),       # terminaison : critère d'arrêt pour l'algo, ici on fait n génération et on s'arrête
+                termination=termination,
                 verbose=True,       # pour afficher ou non les info du processus d'optim, utile pour debug
                 seed=2              # permet de reproduire les résultats en fixant la séquence aléatoire
                 )                   # save_history(optionnel) sur True l'historique de générations sera enregistré pour un post traitement
@@ -148,7 +158,7 @@ np.savez('data/res_'+algorithm_name,resX=res.X, resF = res.F)
 
 
 #%%_____test optimal solution_______________________________________________________________________
-algorithm_name = "DE"
+algorithm_name = "GA"
 data = np.load('data/res_'+algorithm_name+'.npz')
 X_opt = map_to_physical(data['resX'])
 s, c = 2.0, 0.2
@@ -156,31 +166,33 @@ m = 2.4
 eta_w = 0.005
 eta_alpha = 0.005
 XX = [X_opt[0]*c,X_opt[1]*c,X_opt[2],X_opt[3]]
-model = ModelParameters(s, c, x_ea=X_opt[0]*c, x_cg=X_opt[1]*c, m=m, EIx=X_opt[2], GJ=X_opt[3], eta_w=eta_w, eta_alpha=eta_alpha,model_aero= 'Theodorsen')
-model.Umax=22
-model.steps=80
-f, damping, *_ = ROM.ModalParamDyn(model)
-save_modal_data(f = f, damping = damping, model_params=model,out_dir='data', filename=f'model_optim_{algorithm_name}.npz')
-plotter.plot_modal_data_single(npz_path=f'data/model_optim_{algorithm_name}.npz' )
-
+# x_ea = 0.05
+# x_cg = 0.12
+# EIx = 500
+# GJ = 40
+x_ea = XX[0]
+x_cg = XX[1]
+EIx = XX[2]
+GJ = XX[3]
+model = ModelParameters(s, c, x_ea=x_ea, x_cg=x_cg, m=m, EIx=EIx, GJ=GJ, eta_w=eta_w, eta_alpha=eta_alpha,model_aero= 'Theodorsen')
 model.airfoil.plot_naca00xx_section()
-# %%
-data = np.load('data/res_'+'DE'+'.npz')
-X_opt_DE = map_to_physical(data['resX'])
-X_opt_DE[0] *= c
-X_opt_DE[1] *= c
 
-data = np.load('data/res_'+'GA'+'.npz')
-X_opt_GA = map_to_physical(data['resX'])
-X_opt_GA[0] *= c
-X_opt_GA[1] *= c
+f0, zeta0, eigvals0, eigvecs0, w_modes, alpha_modes, energy_dict = ROM.ModalParamAtRest(model) # normalize = 'per_field' or 'per_mode'
+Vq = eigvecs0[:model.Nq, :]
 
-# %%
-plotter.plot_modal_data_two('data/model_optim_GA.npz','data/model_optim_DE.npz')
+f, damping, eigvecs_U, f_modes_U, *_ = ROM.ModalParamDyn(model,tracked_idx=(0,1,2))
+Vq_U = eigvecs_U[:,:model.Nq, :]
 
+plotter.plot_modal_data_single(f,damping,model,suptitle=f'EIx = {EIx}, GJ = {GJ}')
+plotter.plot_vi_grid(Vq=Vq, Nw=model.Nw, Nalpha=model.Nalpha, freqs_hz=f0, kind='abs', normalize=None, sharey=True, suptitle='Modal coefficients per mode',mode_indices=(0,1,2))
 
-
-
+plotter.plot_vi_grid_over_U(U=model.U,
+                            Vq_U=Vq_U,
+                            Nw=model.Nw,
+                            Nalpha=model.Nalpha,
+                            f_modes_U=f_modes_U,
+                            normalize = 'l2',
+                            mode_indices=(0,1,2))
 #%%______________________ test de Uc(x1) pour voir comment on rempli les trous
 s, c = 2.0, 0.2
 m = 2.4
@@ -188,10 +200,12 @@ eta_w = 0.005
 eta_alpha = 0.005
 EIx = 428
 GJ = 48
-x_ea = 0.033
+x_ea = 0.04
+x_cg = 0.16
 model = ModelParameters(s, c, x_ea=x_ea, x_cg=x_ea, m=m, EIx=EIx, GJ=GJ, eta_w=eta_w, eta_alpha=eta_alpha,model_aero= 'Theodorsen')
 
-x_cg_list = np.linspace(x_ea,0.8*c,20)
+x_cg_list = np.linspace(x_ea,0.9*c,35)
+x_ea_list = np.linspace(0.01,0.5*c,35)
 Uc_map = []
 status_list = []
 i=1
@@ -240,4 +254,94 @@ ax.legend(title='status', frameon=False)
 
 plt.tight_layout()
 plt.show()
+# %%_______________________optim on different tracked modes_________________________________________
+
+for i in [1,2,3]: # mode to obj_track : 2,3,4
+    
+    problem_optim_NACA  = ProblemOptim(n_var = para_interval.shape[0], n_obj = n_obj, 
+                                    n_ieq_constr = n_ieq_constr, # nombre de contrainted par inéquation
+                                    xl=xl, xu=xu, # bornes inf et sup de tous nos paramètres variables
+                                    target_mode_idx=i # the mode on which we'll look for the lowest Uc
+    )
+
+    algorithm_name = "GA"
+    algorithm = algorithms[algorithm_name]
+
+    termination = DefaultSingleObjectiveTermination(
+        ftol=1e-3,   # tolérance sur la variation de F
+        period=4,   # nb de générations consécutives à vérifier
+        n_max_gen=20  # sécurité : limite dure si jamais ça n'a pas conver
+        )
+    res = minimize(
+                    problem_optim_NACA, # herite forcement de la classe Problem et doit présenter une fonction _evaluate() bien définie
+                    algorithm,       #objet algo optim, il définit le type d'algo d'optim utilisé
+                    # ('n_gen', 10),       # terminaison : critère d'arrêt pour l'algo, ici on fait n génération et on s'arrête
+                    termination=termination,
+                    verbose=True,       # pour afficher ou non les info du processus d'optim, utile pour debug
+                    seed=2              # permet de reproduire les résultats en fixant la séquence aléatoire
+                    )                   # save_history(optionnel) sur True l'historique de générations sera enregistré pour un post traitement
+    np.savez('data/res_tracked_mode'+str(i+1)+'_'+algorithm_name,resX=res.X, resF = res.F)
+
+#%%____________________reading results of the diffent optim on diff target mode_____________________________________________________
+
+i=1
+algorithm_name = "GA"
+data = np.load('data/res_tracked_mode'+str(i+1)+'_'+algorithm_name+'.npz')
+X_opt = map_to_physical(data['resX'])
+s, c = 2.0, 0.2
+m = 2.4
+eta_w = 0.005
+eta_alpha = 0.005
+model = ModelParameters(s, c, x_ea=X_opt[0]*c, x_cg=X_opt[1]*c, m=m, EIx=X_opt[2], GJ=X_opt[3], eta_w=eta_w, eta_alpha=eta_alpha,model_aero= 'Theodorsen')
+model.Umax=40
+model.airfoil.plot_naca00xx_section()
+
+f, damping, *_ = ROM.ModalParamDyn(model, track_using='fields')
+save_modal_data(f = f, damping = damping, model_params=model,out_dir='data', filename=f'model_optim_tracked_mode{i+1}_{algorithm_name}.npz')
+plotter.plot_modal_data_single(f,damping,model, suptitle=f'Modal data for optimized model (tracked mode {i+1}, {algorithm_name})')
+
+
+
+
+
+
+# %%
+
+
+'''
+EIx_list = [400, 500, 600, 700]
+EIx = 280
+GJ = 91
+GJ_list = [40, 55, 70, 85]
+
+
+fig, ax = plt.subplots(2, 1, sharex=True, constrained_layout=True)
+for (i,EIx) in enumerate(EIx_list):
+
+    model.EIx = EIx
+    f, damping, *_ = ROM.ModalParamDyn(model, tracked_idx=(0, 1, 2,3))
+
+    if i == 0:
+        color = ['lightblue', 'lime', 'lightcoral']
+    elif i == len(EIx_list)-1:
+        color = ['darkblue', 'darkgreen', 'red']
+    else:
+        color = ['blue', 'green', 'orange']
+    ax[0].plot(f[:, 0], color[0], label=f'EIx = {EIx}')
+    ax[0].plot(f[:, 1], color[1])
+    ax[0].plot(f[:, 2], color[2])
+
+    ax[1].plot(damping[:, 0], color[0], label=f'EIx = {EIx}')
+    ax[1].plot(damping[:, 1], color[1])
+    ax[1].plot(damping[:, 2], color[2])
+
+ax[0].set_ylabel('Frequency (Hz)')
+ax[0].legend()
+ax[1].set_ylabel('Damping ratio')
+ax[1].set_xlabel('Wind speed (m/s)')
+ax[1].legend()
+plt.suptitle(f'GJ = {GJ:.2e}')
+plt.show()
+'''
+
 # %%

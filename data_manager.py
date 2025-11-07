@@ -49,5 +49,6 @@ def save_modal_data(f, damping, model_params, out_dir='data', filename='model_pa
         damping=damping,
         **params_prefixed, #we also save all the parameters with the prefix
     )
+    # why can't we save the object model_params directly ? because np.savez need arrays or scalars, not objects
     print(f"Saved modal data to {out_path}")
     return out_path
