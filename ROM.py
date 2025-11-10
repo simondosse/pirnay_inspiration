@@ -65,17 +65,55 @@ def _mode_id_vec(w_mode, alpha_mode):
     '''
     return hop
 
+# def _mode_id_from_eigvec(par, vi):
+#     '''
+#     Function to concatenate the mode shape of A into one vector for correlation with MAC then; use real parts
+#     We normalize so the MAC scores can be compared to one an other
+#     '''
+#     # vi = eigvecs[:par.Nq, k]
+#     vw = vi[:par.Nw]
+#     va = vi[par.Nw:par.Nq]
+#     x = np.concatenate([np.abs(vw), np.abs(va)]).astype(float)
+#     n = np.linalg.norm(x) or 1.0 #we might want to test without normalization 
+#     return x / n
+
 def _mode_id_from_eigvec(par, vi):
     '''
     Function to concatenate the mode shape of A into one vector for correlation with MAC then; use real parts
     We normalize so the MAC scores can be compared to one an other
+
+    we keep the complex values to keep the phase information
     '''
-    # vi = eigvecs[:par.Nq, k]
     vw = vi[:par.Nw]
     va = vi[par.Nw:par.Nq]
-    x = np.concatenate([np.abs(vw), np.abs(va)]).astype(float)
-    n = np.linalg.norm(x) or 1.0 #we might want to test without normalization 
-    return x / n
+    v = np.concatenate([vw, va])
+    if v.size:
+        k0 = int(np.argmax(np.abs(v)))
+        if v[k0] != 0:
+            v = v * np.exp(-1j*np.angle(v[k0]))
+    n = np.linalg.norm(v) or 1.0
+    return v / n
+
+def _rel_phase_from_eigvec(par, vi):
+    vw = vi[:par.Nw]
+    va = vi[par.Nw:par.Nq]
+    if vw.size == 0 or va.size == 0:
+        return 0.0
+    return float(np.angle(np.vdot(va, vw)))
+
+def _wrap_pi(phi):
+    '''
+    we want to constrain phi in [-pi, pi]
+    useful to compute phase differences
+
+    shortest arc 
+
+    Exemple: prev = 179°, curr = -179°
+    Différence brute = -358° ≈ -2π + 2°
+    alors qu'en réalité l'écart physique est 2°
+    _wrap_pi ramène cette différence à l'intervalle ]−π, π], donc ici ≈ +2°
+    '''
+    return (phi + np.pi) % (2*np.pi) - np.pi
 
 def _mac(a, b, eps=1e-16):
     '''
@@ -127,6 +165,31 @@ def _assign_by_mac(prev_refs, curr_vecs):
             best_score = score
             best_cols = cols
     return tuple(best_cols), MAC
+
+def _assign_by_mac_with_phase(prev_refs, prev_relphi, curr_vecs, curr_relphi, kappa=0.3):
+    '''
+    this function is an extension of _assign_by_mac that also takes into account the relative phase between w and alpha for each mode
+
+    Idée: pénaliser les candidats dont la phase relative entre w et alpha diffère de celle du mode suivi à U(i-1)
+    kappa in [0,1]: poids de la cohérence de phase
+    '''
+
+    K, N = len(prev_refs), len(curr_vecs)
+    MAC = np.zeros((K, N)) # MAC matrix
+    PHW = np.zeros((K, N)) # phase weight matrix
+    for k in range(K):
+        for j in range(N):
+            MAC[k, j] = _mac(prev_refs[k], curr_vecs[j])
+            dphi = _wrap_pi(curr_relphi[j] - prev_relphi[k])
+            PHW[k, j] = np.cos(dphi / 2.0) ** 2 # [0,1]
+            SCORE = (1 - kappa) * MAC + kappa * (MAC * PHW)
+            best_score = -np.inf
+            best_cols = None
+    for cols in itertools.permutations(range(N), K):
+        s = sum(SCORE[k, cols[k]] for k in range(K))
+        if s > best_score:
+            best_score, best_cols = s, cols
+    return tuple(best_cols), MAC, PHW
 
 ''' General functions to compute the mode shapes and modal matrices '''
 
@@ -959,6 +1022,7 @@ def TheodoresenAeroModel(par,U,omega):
         Ka = par.rho_air * (U**2) * np.block([[L_w * phi_ww , L_alpha * par.airfoil.b * phi_walpha], [- M_w * par.airfoil.b * phi_walpha.T, - M_alpha * (par.airfoil.b**2) * phi_alphaalpha]])
         Ca = par.rho_air * U * par.airfoil.b *np.block([[L_w_dot * phi_ww , L_alpha_dot * par.airfoil.b * phi_walpha], [- M_w_dot * par.airfoil.b * phi_walpha.T, - M_alpha_dot * (par.airfoil.b**2) * phi_alphaalpha]])
         Ma = par.rho_air * (par.airfoil.b**2) * np.block([[L_w_dot_dot * phi_ww , L_alpha_dot_dot * par.airfoil.b * phi_walpha], [- M_w_dot_dot * par.airfoil.b * phi_walpha.T, - M_alpha_dot_dot * (par.airfoil.b**2) * phi_alphaalpha]])
+        # Ma does not depend on U
     else:
         Ka = np.zeros((par.Nalpha+par.Nw+par.Nv,par.Nalpha+par.Nw+par.Nv))
         Ca = np.zeros((par.Nalpha+par.Nw+par.Nv,par.Nalpha+par.Nw+par.Nv))
@@ -1032,21 +1096,22 @@ def stateMatrixAero(par,U,omega):
     if par.model_aero == 'QuasiSteady':
         Ka = QuasiSteadyAeroModel(par,U)
         K = K + Ka
+        Minv = np.linalg.inv(M)
 
     elif par.model_aero == 'Theodorsen':
         Ka , Ca , Ma = TheodoresenAeroModel(par,U,omega)
         K = K + Ka
         C = C + Ca
-  
+        Minv = np.linalg.inv(M+Ma)
     else:
         raise ValueError("Model not recognized")
     
-    Minv = np.linalg.inv(M)
+        
     A = np.block([[np.zeros((par.Nw + par.Nalpha,par.Nw + par.Nalpha)),np.eye(par.Nw + par.Nalpha)],[-Minv @ K,-Minv @ C]])
-    
+        
     return A
 
-def ModalParamDyn(par, tracked_idx=(0,1,2,3), compute_shapes=True, compute_energy=True, track_using = None):
+def ModalParamDyn(par, tracked_idx=(0,1,2,3), compute_shapes=False, compute_energy=False, track_using = None):
     '''
     Compute the modal parameters of the system for a range of wind speeds.
 
@@ -1056,6 +1121,7 @@ def ModalParamDyn(par, tracked_idx=(0,1,2,3), compute_shapes=True, compute_energ
         Parameters including `U` (array of wind speeds) and structural/aero settings.
     tracked_idx : list
         the modes that we track
+
     RETURNS
     ---------------
     f : np.ndarray
@@ -1156,19 +1222,23 @@ def ModalParamDyn(par, tracked_idx=(0,1,2,3), compute_shapes=True, compute_energ
         # field : we use the w_modes and a_modes shapes in the physical space to track the modes
         # None  : we use the eigvecs vi from A to track the modes
         if i == 0:
-            if (track_using == 'fields') and compute_shapes:
-                curr_vecs = [_mode_id_vec(w_modes[j, :], alpha_modes[j, :]) for j in range(par.Nq)]
-            else:
-                curr_vecs = [_mode_id_from_eigvec(par, eigvecs[:par.Nq, j]) for j in range(par.Nq)]
-            prev_refs = [curr_vecs[j] for j in tracked_idx]  # mode à U=0 devient notre ref pour la suite
+            curr_vecs = [_mode_id_from_eigvec(par, eigvecs[:par.Nq, j]) for j in range(par.Nq)] #we have a j loop to consider all the modes
+            curr_rel = [_rel_phase_from_eigvec(par, eigvecs[:par.Nq, j]) for j in range(par.Nq)]
+            prev_refs = [curr_vecs[j] for j in tracked_idx]
+            prev_rel = [curr_rel[j] for j in tracked_idx] # on regarde aussi la phase relative entre vw et va Vq1 = [vw ; va]
+            # mode à U=0 devient notre ref pour la suite
         else:
             # assign by MAC against previous references
-            if (track_using == 'fields') and compute_shapes:
-                curr_vecs = [_mode_id_vec(w_modes[j, :], alpha_modes[j, :]) for j in range(par.Nq)]
-            else:
-                curr_vecs = [_mode_id_from_eigvec(par, eigvecs[:par.Nq, j]) for j in range(par.Nq)]
-            tracked_idx, MAC = _assign_by_mac(prev_refs, curr_vecs)
+            curr_vecs = [_mode_id_from_eigvec(par, eigvecs[:par.Nq, j]) for j in range(par.Nq)]
+            curr_rel = [_rel_phase_from_eigvec(par, eigvecs[:par.Nq, j]) for j in range(par.Nq)]
+
+            tracked_idx, MAC, PHW = _assign_by_mac_with_phase(prev_refs, prev_rel, curr_vecs, curr_rel, kappa=0.3)
+            # _assign_by_mac_with_phase returns the new indices of the tracked modes considering both MAC and relative phase criteria
+            # _assign_by_mac only uses MAC for the assignment
+
+            # update references
             prev_refs = [curr_vecs[j] for j in tracked_idx]
+            prev_rel = [curr_rel[j] for j in tracked_idx]
 
         # fill outputs for the tracked modes only
         k_list = tracked_idx
@@ -1178,7 +1248,8 @@ def ModalParamDyn(par, tracked_idx=(0,1,2,3), compute_shapes=True, compute_energ
             realpart[i, j] = p[k]
 
         # keep omega ref near the followed modes (updating the reduced frequency for Theodorsen model)
-        previous_omega = float(np.mean(w[list(tracked_idx)]))
+        # previous_omega = float(np.mean(w[list(tracked_idx)]))
+        previous_omega = float(w[k_list[0]]+w[k_list[1]])/2
         # JE SAIS pas si on doit faire la moyenne de tous les omega pour la freq réduite ou que des modes qui nous intéresse ?
         # previous_omega = 0.5 * (w[k_list[1]] + w[k_list[]])
     
@@ -1275,6 +1346,11 @@ def obj_evaluation(U, damping, return_status=False):
             Uc_best = 70
             slope_cross = 0.0
             status = 'censored'
+
+        # test en mettant à 70 si ça cross pas
+        Uc_best = 70
+        slope_cross = 0.0
+        status = 'censored'
 
 
     if return_status:

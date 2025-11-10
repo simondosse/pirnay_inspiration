@@ -6,7 +6,7 @@ depending on the installed version
 import numpy as np
 import pandas as pd
 import os
-
+import plotter
 import NACA
 import ROM
 
@@ -15,14 +15,6 @@ from input import ModelParameters
 
 from pymoo.core.problem import ElementwiseProblem
 
-
-# fixed parameters
-s, c = 2.0, 0.2
-m = 2.4
-eta_w = 0.005
-eta_alpha = 0.005
-# we define a model with default random parameters for the X[i], those will be updated during the evaluation F(X)
-model = ModelParameters(s, c, x_ea=0.05, x_cg=0.13, m=m, EIx=400, GJ=70, eta_w=eta_w, eta_alpha=eta_alpha, model_aero='Theodorsen')
 
 def constraints(X):
     # Retourner un tableau g(x) <= 0 (inégalités)
@@ -49,13 +41,18 @@ def cost(X,target_mode_idx):
         (can be a real Uc because it crosses,
         extrapolated if it doesnt cross but a negative slope exists, or arbitrary high if no crossing and no negative slope)
     '''
-    model.airfoil.x_ea = X[0]*c # *c because we are dealing with adimensionnal parameter
-    model.airfoil.x_cg = X[1]*c # peut faire en sorte que quand on appelle model.x_cg ça appelle en fait model.airfoil.x_cg ? moue c'est mieux de laisser comme ça : on comprend + ce que l'on fait
-    model.EIx = X[2]
-    model.GJ = X[3]
+    model = ModelParameters(s=2, c=0.2, x_ea=X[0]*0.2, x_cg=X[1]*0.2, m=2.4, EIx=X[2], GJ=X[3],model_aero='Theodorsen')
+    # we rebuild the model with the new physical parameters X each time (a bit long but ok for now)
 
-    _, damping, *_ = ROM.ModalParamDyn(model,compute_energy = False, compute_shapes = False)
+    # model.airfoil.x_ea = X[0]*c # *c because we are dealing with adimensionnal parameter
+    # model.airfoil.x_cg = X[1]*c # peut faire en sorte que quand on appelle model.x_cg ça appelle en fait model.airfoil.x_cg ? moue c'est mieux de laisser comme ça : on comprend + ce que l'on fait
+    # model.EIx = X[2]
+    # model.GJ = X[3]
+
+    f, damping, *_ = ROM.ModalParamDyn(model)
+    
     Uc, _ = ROM.obj_evaluation(U = model.U, damping = damping[:,target_mode_idx]) # /!\ la matrice de damping regarde tous les modes 0,1,2,3
+    # plotter.plot_modal_data_single(f,damping,model, suptitle=f'EIx = {model.EIx:.1f}, GJ = {model.GJ:.1f}, x_ea = {model.airfoil.x_ea:.3f}, x_cg = {model.airfoil.x_cg:.3f}, Uc = {Uc:.1f}')
     '''
     the big problem is that Uc extrapolated can be the lowest Uc, but if we extrapolated that means we don't have a damping cross so we want to avoid that
     '''
@@ -88,6 +85,6 @@ class ProblemOptim(ElementwiseProblem): # ElementwiseProblem est une sous-classe
         # minimize renvoie un :class:`~pymoo.core.result.Result`
 
     def _evaluate(self, X, out, *args, **kwargs):
-        X_physical = map_to_physical(X)
+        X_physical = map_to_physical(X) # X_physical = [x_ea/c, x_cg/c, EI, GJ]
         out["F"] = cost(X_physical, self.target_mode_idx)
         # out["G"] = constraints(X)   # <= 0

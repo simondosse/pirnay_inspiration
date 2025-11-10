@@ -40,7 +40,7 @@ eta_alpha = 0.005 # structural damping ratio in torsion, damping ratio are arbit
 
 ''' Wingtip parameters '''
 
-wingtip_mass_study = True
+wingtip_mass_study = False
 if wingtip_mass_study:
     Mt = 362e-3   # mass of the tip body
     I_alpha_t = 6.11e-4 # mass moment of inertia of the tip body
@@ -86,16 +86,18 @@ model_opt.airfoil.plot_naca00xx_section()
 f0, zeta0, eigvals0, eigvecs0, w_modes, alpha_modes, energy_dict = ROM.ModalParamAtRest(model_opt) # normalize = 'per_field' or 'per_mode'
 Vq = eigvecs0[:model_opt.Nq, :]
 
-plotter.plot_mode_shapes_grid(y=model_opt.y, freqs_hz=f0, W=energy_dict['T_ew'], ALPHA=energy_dict['T_ea'], sharey=True, suptitle='Structural mode shape contribution - U=0')
-plotter.plot_mode_shapes_grid(y=model_opt.y, freqs_hz=f0, W=energy_dict['U_ew'], ALPHA=energy_dict['U_ea'], sharey=True, suptitle='Structural mode shape contribution - U=0')
+plotter.plot_vi_grid(Vq=Vq, Nw=model_opt.Nw, Nalpha=model_opt.Nalpha, freqs_hz=f0, kind='abs', normalize='l2', sharey=True, suptitle='Modal coefficients per mode')
+# plotter.plot_mode_shapes_grid(y=model_opt.y, freqs_hz=f0, W=energy_dict['T_ew'], ALPHA=energy_dict['T_ea'], sharey=True, suptitle='Structural mode shape contribution - U=0')
+# plotter.plot_mode_shapes_grid(y=model_opt.y, freqs_hz=f0, W=energy_dict['U_ew'], ALPHA=energy_dict['U_ea'], sharey=True, suptitle='Structural mode shape contribution - U=0')
+# plotter.plot_mode_shapes_grid(y=model_opt.y, freqs_hz=f0, W=w_modes, ALPHA=alpha_modes, sharey=True, suptitle='Structural mode shape contribution - U=0')
 
-plotter.plot_mode_shapes_grid(y=model_opt.y, freqs_hz=f0, W=w_modes, ALPHA=alpha_modes, sharey=True, suptitle='Structural mode shape contribution - U=0')
-
-plotter.plot_vi_grid(Vq=Vq, Nw=model_opt.Nw, Nalpha=model_opt.Nalpha, freqs_hz=f0, kind='abs', normalize=None, sharey=True, suptitle='Modal coefficients per mode')
 
 
 
 #%% 
+# model_opt.airfoil.x_ea += 0.02
+# model_opt.airfoil.x_cg += 0.02
+
 f, damping, eigvecs_U, f_modes_U, w_modes_U, alpha_modes_U, energy_dict_U = ROM.ModalParamDyn(model_opt,tracked_idx=(0,1,2,3))
 Vq_U = eigvecs_U[:,:model_opt.Nq, :]
 plotter.plot_modal_data_single(f,damping,model_opt, suptitle='Modal data for optimized model')

@@ -1,5 +1,5 @@
 #%%
-from re import A, U
+from re import U
 from turtle import mode
 import numpy as np
 import NACA
@@ -36,8 +36,6 @@ para_interval = np.array([
     [40, 70]                            # GJ [Nm²]
 ])
 
-target_mode_idx=0
-
 xl = para_interval[:,0]
 xu = para_interval[:,1]
 n_obj = 1 # nombre d'objectifs à optim en même temps (F)
@@ -46,7 +44,7 @@ n_ieq_constr = 0 # nombre de contraintes à respecter (G)
 problem_optim_NACA  = ProblemOptim(n_var = para_interval.shape[0], n_obj = n_obj, 
                                     n_ieq_constr = n_ieq_constr, # nombre de contrainted par inéquation
                                     xl=xl, xu=xu, # bornes inf et sup de tous nos paramètres variables
-                                    target_mode_idx=target_mode_idx # the mode on which we'll look for the lowest Uc
+                                    target_mode_idx=1 # the mode on which we'll look for the lowest Uc
 )
 
 algorithm_GA = GA(
@@ -154,7 +152,7 @@ res.CV : violation des contraintes (0 normalement)
 res.exec_time : temps de calcul 
 '''
 
-np.savez(f'data/res_target_{target_mode_idx}_'+algorithm_name,resX=res.X, resF = res.F)
+np.savez('data/res_'+algorithm_name,resX=res.X, resF = res.F)
 
 
 
@@ -162,7 +160,7 @@ np.savez(f'data/res_target_{target_mode_idx}_'+algorithm_name,resX=res.X, resF =
 
 #%%_____test optimal solution_______________________________________________________________________
 algorithm_name = "GA"
-data = np.load(f'data/res_target_{target_mode_idx}_'+algorithm_name+'.npz')
+data = np.load('data/res_'+algorithm_name+'.npz')
 X_opt = map_to_physical(data['resX'])
 s, c = 2.0, 0.2
 m = 2.4
@@ -177,7 +175,6 @@ x_ea = XX[0]
 x_cg = XX[1]
 EIx = XX[2]
 GJ = XX[3]
-
 model = ModelParameters(s, c, x_ea=x_ea, x_cg=x_cg, m=m, EIx=EIx, GJ=GJ, eta_w=eta_w, eta_alpha=eta_alpha,model_aero= 'Theodorsen')
 model.airfoil.plot_naca00xx_section()
 
@@ -186,17 +183,19 @@ Vq = eigvecs0[:model.Nq, :]
 
 # model.Ustep = 500
 # model.Ustep = 15
+model.Umax = 30
+model.Ustep = 100
 f, damping, eigvecs_U, f_modes_U, *_ = ROM.ModalParamDyn(model)
 Vq_U = eigvecs_U[:,:model.Nq, :]
 # Uc0, _ , status = ROM.obj_evaluation(U = model.U, damping = damping[:,0], return_status=True)
-Uc, _ , status = ROM.obj_evaluation(U = model.U, damping = damping[:,1], return_status=True)
+Uc1, _ , status = ROM.obj_evaluation(U = model.U, damping = damping[:,1], return_status=True)
 Uc2, _ , status = ROM.obj_evaluation(U = model.U, damping = damping[:,2], return_status=True)
 # Uc3, _ , status = ROM.obj_evaluation(U = model.U, damping = damping[:,3], return_status=True)
 # Uc4, _ , status = ROM.obj_evaluation(U = model.U, damping = damping[:,4], return_status=True)
 # Uc5, _ , status = ROM.obj_evaluation(U = model.U, damping = damping[:,5], return_status=True)
 
 
-plotter.plot_modal_data_single(f,damping,model, suptitle=f'EIx = {model.EIx:.1f}, GJ = {model.GJ:.1f}, x_ea = {model.airfoil.x_ea:.3f}, x_cg/c = {model.airfoil.x_cg:.3f}, Uc = {Uc:.1f}')
+plotter.plot_modal_data_single(f,damping,model,suptitle=f'EIx = {EIx}, GJ = {GJ}')
 plotter.plot_vi_grid(Vq=Vq, Nw=model.Nw, Nalpha=model.Nalpha, freqs_hz=f0, kind='abs', normalize=None, sharey=True, suptitle='Modal coefficients per mode',mode_indices=(0,1,2))
 
 plotter.plot_vi_grid_over_U(U=model.U,

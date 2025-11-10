@@ -6,7 +6,7 @@ class ModelParameters:
     Define the parameters of the model.
     """
 
-    def __init__(self,s, c, x_ea, x_cg, m, EIx, GJ, eta_w, eta_alpha, Mt=None, I_alpha_t=None, x_t=None, model_aero = 'Theodorsen'):
+    def __init__(self,s, c, x_ea, x_cg, m, EIx, GJ, eta_w=0.005, eta_alpha=0.005, Mt=None, I_alpha_t=None, x_t=None, model_aero = 'Theodorsen'):
         ''' 
         Initialize the model parameters.
 
@@ -88,8 +88,8 @@ class ModelParameters:
         # actually the dCm shoudn't be constant, in the stall region the curve is not linear anymore
 
         self._Umax = 30                          # Maximum velocity of the IAT wind tunnel
-        self._steps = 120                        # Number of velocity steps
-        self.U = np.linspace(0.1, self._Umax, self._steps)
+        self._Ustep = 100                        # Number of velocity steps
+        self.U = np.linspace(0.1, self._Umax, self._Ustep)
 
         if model_aero not in ['Theodorsen', 'QuasiSteady']:
             raise ValueError("model_aero must be either 'Theodorsen' or 'QuasiSteady'")
@@ -109,8 +109,8 @@ class ModelParameters:
             self.Nq = int(self._Nv) + int(self._Nw) + int(self._Nalpha)
 
     def _recompute_U(self):
-        if hasattr(self, "_Umax") and hasattr(self, "_steps"):
-            self.U = np.linspace(0.1, float(self._Umax), int(self._steps))
+        if hasattr(self, "_Umax") and hasattr(self, "_Ustep"):
+            self.U = np.linspace(0.1, float(self._Umax), int(self._Ustep))
 
     def _refresh_tip_state(self):
         # has_tip déterminé uniquement par Mt (non None et non nul)
@@ -198,12 +198,12 @@ class ModelParameters:
 
     # --- steps ---
     @property
-    def steps(self) -> int:
-        return self._steps
+    def Ustep(self) -> int:
+        return self._Ustep
 
-    @steps.setter
-    def steps(self, value: int) -> None:
-        self._steps = int(value)
+    @Ustep.setter
+    def Ustep(self, value: int) -> None:
+        self._Ustep = int(value)
         self._recompute_U()
 
 
