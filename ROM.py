@@ -118,7 +118,7 @@ def _wrap_pi(phi):
 def _mac(a, b, eps=1e-16):
     '''
     Calculate MAC(a,b)
-    1=> same (à une phase près)
+    1=> same (à une phase près, en fait non ça dépend de la phase relative entre a et b)
     0=> orthogonal
     '''
     num = np.abs(np.vdot(a, b))**2
@@ -1282,6 +1282,13 @@ def obj_evaluation(U, damping, return_status=False):
     Uc_best = None
     slope_cross = None
 
+    Umax = U[-1]
+    Uc_malus = Umax  # penalization value if no crossing found
+    # ce malus n'a du sens que si on empêche l'extrapolation, sinon
+    # ça voudrait dire qu'on peut avoir un meilleur score avec le malus qu'avec une extrapolation de pente negative
+
+    beta = 20 # Uc = Uc_malus + beta * damping[-1]
+
     d = np.asarray(damping, dtype=float)
     s = np.gradient(d, U)
 
@@ -1309,6 +1316,7 @@ def obj_evaluation(U, damping, return_status=False):
         slope_cross = s[j]
         status = 'cross'
     else:  # if the damping doesn't cross 0
+        '''
         # Require at least two consecutive negative slope steps to allow extrapolation
         # it avoids the problem when the MAC tracking messes up the damping curve and we have some isolated negative slopes (specially at low U)
         def at_least_k_consecutive_true(mask: np.ndarray, k: int) -> np.ndarray:
@@ -1335,6 +1343,7 @@ def obj_evaluation(U, damping, return_status=False):
                 Uc_best = Uc_hat
                 slope_cross = s[j]
                 status = 'extrapolated'
+                
             else :
                 # unrealistic extrapolated Uc : censor
                 Uc_best = 70
@@ -1342,15 +1351,26 @@ def obj_evaluation(U, damping, return_status=False):
                 status = 'censored'
             
         else:
+        '''
             # not enough evidence (no 2 consecutive negative slopes): censor
-            Uc_best = 70
+        count = 0
+        count = sum(s[i] * s[i-1] < 0 for i in range(1, len(s)))
+
+        if count ==0 : # no negative slope at all
+            Uc_best = Uc_malus + beta*damping[-1]  # penalization value if no crossing found
+            slope_cross = 0.0
+            status = 'censored'
+        else : # that means we are dealing with a hump mode and we try to avoid them (because to hard to deal with them to make them cross)
+            Uc_best = Uc_malus + beta + beta/10*damping[-1]
+            '''
+            penalization value if no crossing found
+            commence ça on est sur de pas avoir un meilleur score pour un hump mode qu'avec un potentiel vrai crossing hors fenetre
+            car damping in [0,1] quand ça cross pas
+            '''
             slope_cross = 0.0
             status = 'censored'
 
-        # test en mettant à 70 si ça cross pas
-        Uc_best = 70
-        slope_cross = 0.0
-        status = 'censored'
+
 
 
     if return_status:

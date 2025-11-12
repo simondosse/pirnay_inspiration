@@ -42,6 +42,8 @@ def cost(X,target_mode_idx):
         extrapolated if it doesnt cross but a negative slope exists, or arbitrary high if no crossing and no negative slope)
     '''
     model = ModelParameters(s=2, c=0.2, x_ea=X[0]*0.2, x_cg=X[1]*0.2, m=2.4, EIx=X[2], GJ=X[3],model_aero='Theodorsen')
+    model.Umax = 40
+    model.Ustep = 80
     # we rebuild the model with the new physical parameters X each time (a bit long but ok for now)
 
     # model.airfoil.x_ea = X[0]*c # *c because we are dealing with adimensionnal parameter
@@ -49,7 +51,7 @@ def cost(X,target_mode_idx):
     # model.EIx = X[2]
     # model.GJ = X[3]
 
-    f, damping, *_ = ROM.ModalParamDyn(model)
+    _, damping, *_ = ROM.ModalParamDyn(model)
     
     Uc, _ = ROM.obj_evaluation(U = model.U, damping = damping[:,target_mode_idx]) # /!\ la matrice de damping regarde tous les modes 0,1,2,3
     # plotter.plot_modal_data_single(f,damping,model, suptitle=f'EIx = {model.EIx:.1f}, GJ = {model.GJ:.1f}, x_ea = {model.airfoil.x_ea:.3f}, x_cg = {model.airfoil.x_cg:.3f}, Uc = {Uc:.1f}')
